@@ -1,0 +1,158 @@
+name: Nightly build
+
+on:
+  workflow_call:
+    inputs:
+      title:
+        description: The application name shown on the release
+        required: true
+        type: string
+      packages:
+        description: The openSUSE development packages the application needs
+        required: true
+        type: string
+      arch-packages:
+        description: The Arch Linux packages the application needs for its AppImage, with no AppImage built when empty
+        required: false
+        type: string
+        default: ''
+    secrets:
+      BUILD_ENV:
+        description: Lines of NAME=value the application's build reads, such as service keys kept out of the source
+        required: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+      last: ${{ steps.changes.outputs.last }}
+      commit: ${{ steps.changes.outputs.commit }}
+    steps:
+      - name: Check out the requested commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Look for changes since the last release
+        id: changes
+        run: |
+          last=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ -n "$last" ] && [ "$(git rev-list -n 1 "$last")" = "$(git rev-parse HEAD)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+
+  archive:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    container: opensuse/tumbleweed
+    steps:
+      - name: Install build tools
+        run: zypper --non-interactive install --no-recommends git tar gzip gcc make pkg-config ${{ inputs.packages }}
+
+      - name: Check out the release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.commit }}
+          submodules: true
+
+      - name: Load the build settings
+        env:
+          BUILD_ENV: ${{ secrets.BUILD_ENV }}
+        run: |
+          printf '%s\n' "$BUILD_ENV" | while IFS='=' read -r name value; do
+            [ -n "$name" ] || continue
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Build and pack the archive
+        run: sh .crimson-build/archive.sh
+
+      - name: Keep the archive for the release
+        uses: actions/upload-artifact@v7
+        with:
+          name: archive
+          path: dist/*.tar.gz
+
+  appimage:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true' && inputs.arch-packages != ''
+    runs-on: ubuntu-latest
+    container: ghcr.io/pkgforge-dev/archlinux:latest
+    steps:
+      - name: Install the AppImage tools
+        uses: pkgforge-dev/anylinux-setup-action@ba7321e11074f9e387a0634e653d09b115d576cd
+
+      - name: Install build tools
+        run: |
+          pacman -S --needed --noconfirm ${{ inputs.arch-packages }}
+          get-debloated-pkgs --add-mesa --prefer-nano icu-mini libxml2-mini gtk4-mini
+
+      - name: Check out the release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.commit }}
+          submodules: true
+
+      - name: Load the build settings
+        env:
+          BUILD_ENV: ${{ secrets.BUILD_ENV }}
+        run: |
+          printf '%s\n' "$BUILD_ENV" | while IFS='=' read -r name value; do
+            [ -n "$name" ] || continue
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Build and pack the AppImage
+        run: sh .crimson-build/appimage.sh
+
+      - name: Start the AppImage
+        run: quick-sharun --test dist/*.AppImage
+
+      - name: Keep the AppImage for the release
+        uses: actions/upload-artifact@v7
+        with:
+          name: appimage
+          path: dist/*.AppImage*
+
+  publish:
+    needs: [changes, archive, appimage]
+    # A tool without an AppImage task skips that job, and its release still goes out with the archive
+    if: >-
+      !cancelled() && github.ref_name == 'main' && needs.archive.result == 'success'
+      && contains(fromJSON('["success", "skipped"]'), needs.appimage.result)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.commit }}
+          fetch-depth: 0
+
+      - name: Collect the builds
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the release
+        run: |
+          commit="${{ needs.changes.outputs.commit }}"
+          tag="nightly-$(date -u +%Y-%m-%d)-$(git rev-parse --short "$commit")"
+          last="${{ needs.changes.outputs.last }}"
+          : > notes.txt
+          if [ -n "$last" ]; then
+            git log --reverse --format=%B "$last..$commit" | grep -v '^$' | head -20 | sed 's/^./* \u&/' > notes.txt
+          fi
+          gh release create "$tag" dist/* --target "$commit" --title "${{ inputs.title }} $(date -u +%Y-%m-%d)" --notes-file notes.txt
