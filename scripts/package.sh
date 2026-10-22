@@ -20,6 +20,12 @@ for desktop in data/"$APPLICATION_ID"*.desktop.in; do
 	sed "s|@EXEC@|$PROGRAM|" "$desktop" > "$folder/share/applications/$(basename "$desktop" .in)"
 done
 install -m 644 "data/icons/scalable/apps/$APPLICATION_ID.svg" "$folder/share/icons/hicolor/scalable/apps/"
+# Panels find a tray icon's symbolic form only in an installed icon theme, so an application that has one ships it
+symbolic=data/icons/symbolic/apps/$APPLICATION_ID-symbolic.svg
+if [ -f "$symbolic" ]; then
+	mkdir -p "$folder/share/icons/hicolor/symbolic/apps"
+	install -m 644 "$symbolic" "$folder/share/icons/hicolor/symbolic/apps/"
+fi
 install -m 644 "data/$APPLICATION_ID.metainfo.xml" "$folder/share/metainfo/"
 mkdir -p dist
 tar -C "$staging" -czf "dist/$name.tar.gz" "$name"
