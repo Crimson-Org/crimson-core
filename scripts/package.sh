@@ -1,7 +1,8 @@
 #!/bin/sh
 # Pack a built application with its notices into a tar.gz in dist/, run from the project folder by its archive task
 #
-# PROGRAM and APPLICATION_ID name the application, and EXTRA_LICENSES lists name=path pairs for bundled code
+# PROGRAM and APPLICATION_ID name the application, EXTRA_PROGRAMS lists other built programs to pack with it
+# and EXTRA_LICENSES lists name=path pairs for bundled code
 
 set -eu
 version=${VERSION:?VERSION is not set}
@@ -11,6 +12,9 @@ trap 'rm -rf -- "$staging"' EXIT
 folder=$staging/$name
 mkdir -p "$folder/share/applications" "$folder/share/icons/hicolor/scalable/apps" "$folder/share/metainfo"
 install -m 755 "build/$PROGRAM" "$folder/"
+for extra in ${EXTRA_PROGRAMS:-}; do
+	install -m 755 "$extra" "$folder/"
+done
 install -m 644 LICENSE README.md "$folder/"
 for pair in ${EXTRA_LICENSES:-}; do
 	mkdir -p "$folder/licenses/${pair%%=*}"

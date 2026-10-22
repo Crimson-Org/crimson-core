@@ -24,13 +24,17 @@ A handle on the sidebar's edge drags it wider or narrower, and the app keeps the
 
 Lines over 10,000 characters show as pieces, so a minified file opens without freezing and saves unchanged.
 
+### Tray
+
+A panel icon shows or hides the window, and its right click menu runs the program's own actions.
+
 ### Loading
 
 A spinner that fades in after 500 ms and a fade for content that arrives.
 
 ### Packaging
 
-`scripts/package.sh` packs a built app into a tar.gz, and the reusable nightly workflow builds and publishes a release when `main` changed.
+`scripts/package.sh` packs a built app and any extra programs it includes into a tar.gz, and the reusable nightly workflow builds and publishes a release when `main` changed.
 
 ## Building
 
