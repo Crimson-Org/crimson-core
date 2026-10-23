@@ -26,7 +26,8 @@ Lines over 10,000 characters show as pieces, so a minified file opens without fr
 
 ### Tray
 
-A panel icon shows or hides the window, and its right click menu runs the program's own actions.
+A panel icon shows or hides the window, and its right click menu runs the program's own actions.\
+A glowing red dot marks the icon while something waits for the user.
 
 ### Loading
 

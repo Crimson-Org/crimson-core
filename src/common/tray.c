@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include "identity.h"
 #include "tray.h"
 
@@ -7,6 +9,12 @@
 #define ITEM_PATH "/StatusNotifierItem"
 #define MENU_PATH "/MenuBar"
 #define ICON_SIZE 22
+/* The attention dot's size and glow in pixels, and its crimson */
+#define DOT_RADIUS 3.5
+#define DOT_GLOW 2.5
+#define DOT_RED 232
+#define DOT_GREEN 32
+#define DOT_BLUE 60
 #define SYMBOLIC_FOLDER "icons/hicolor/symbolic/apps"
 #define SYMBOLIC_SUFFIX "-symbolic"
 #define DBUSMENU_VERSION 3
@@ -30,6 +38,7 @@ static const char ITEM_INTERFACE[] =
 	"<method name='ContextMenu'><arg type='i' direction='in'/><arg type='i' direction='in'/></method>"
 	"<method name='Scroll'><arg type='i' direction='in'/><arg type='s' direction='in'/></method>"
 	"<signal name='NewToolTip'/>"
+	"<signal name='NewIcon'/>"
 	"</interface></node>";
 
 static const char MENU_INTERFACE[] =
@@ -56,8 +65,10 @@ static const char MENU_INTERFACE[] =
 struct Tray {
 	GtkWindow *window;
 	GDBusConnection *bus;
-	GVariant *pixmap;
+	GVariant *pixmap, *attention_pixmap;
 	char *theme_path;
+	/* Whether something waits for the user, which marks the icon with a glowing red dot */
+	gboolean wants_attention;
 	/* The entries' labels, which the program may change, and their actions */
 	GPtrArray *labels, *actions;
 	char *secondary_action, *scroll_action;
@@ -179,12 +190,14 @@ static GVariant *read_item_property(GDBusConnection *bus, const char *sender, co
 		return g_variant_new_string(identity->name);
 	if (g_str_equal(name, "Status"))
 		return g_variant_new_string("Active");
+	/* Panels draw a named icon in one colour, so the red dot goes out as pixels with no name beside them */
 	if (g_str_equal(name, "IconName"))
-		return g_variant_new_take_string(g_strconcat(identity->id, SYMBOLIC_SUFFIX, NULL));
+		return tray->wants_attention ? g_variant_new_string("")
+			: g_variant_new_take_string(g_strconcat(identity->id, SYMBOLIC_SUFFIX, NULL));
 	if (g_str_equal(name, "IconThemePath"))
 		return g_variant_new_string(tray->theme_path);
 	if (g_str_equal(name, "IconPixmap"))
-		return g_variant_ref(tray->pixmap);
+		return g_variant_ref(tray->wants_attention ? tray->attention_pixmap : tray->pixmap);
 	if (g_str_equal(name, "ToolTip"))
 		return g_variant_new("(s@a(iiay)ss)", "", tray->pixmap, identity->name, "");
 	if (g_str_equal(name, "ItemIsMenu"))
@@ -214,8 +227,31 @@ static char *write_symbolic_icon(void) {
 }
 
 
-/* The same symbolic icon as pixels, in a light grey that suits dark panels, for hosts that ignore the theme path */
-static GVariant *create_pixmap(void) {
+/* A glowing crimson dot in the lower right corner, blended over the icon's pixels, which are alpha first */
+static void draw_attention_dot(guchar *pixels, int width, int height) {
+	double centre_x = width - DOT_RADIUS - DOT_GLOW, centre_y = height - DOT_RADIUS - DOT_GLOW;
+	for (int row = 0; row < height; row++) {
+		for (int column = 0; column < width; column++) {
+			double distance = hypot(column + 0.5 - centre_x, row + 0.5 - centre_y);
+			double cover = distance <= DOT_RADIUS ? 1 : distance <= DOT_RADIUS + DOT_GLOW
+				? 0.55 * (1 - (distance - DOT_RADIUS) / DOT_GLOW) : 0;
+			if (cover <= 0)
+				continue;
+			guchar *pixel = pixels + ((gsize)row * width + column) * 4;
+			double below = pixel[0] / 255.0 * (1 - cover);
+			double alpha = cover + below;
+			pixel[1] = (guchar)lround((DOT_RED * cover + pixel[1] * below) / alpha);
+			pixel[2] = (guchar)lround((DOT_GREEN * cover + pixel[2] * below) / alpha);
+			pixel[3] = (guchar)lround((DOT_BLUE * cover + pixel[3] * below) / alpha);
+			pixel[0] = (guchar)lround(alpha * 255);
+		}
+	}
+}
+
+
+/* The same symbolic icon as pixels, in a light grey that suits dark panels, for hosts that ignore the theme path,
+ * with the attention dot when asked for */
+static GVariant *create_pixmap(gboolean has_dot) {
 	g_autofree char *symbolic = get_symbolic_name();
 	g_autofree char *name = g_strconcat("icons/symbolic/apps/", symbolic, NULL);
 	g_autofree char *path = get_resource_path(name);
@@ -239,6 +275,8 @@ static GVariant *create_pixmap(void) {
 				to[3] = from[2];
 			}
 		}
+		if (has_dot)
+			draw_attention_dot(pixels, width, height);
 		GVariant *bytes = g_variant_new_from_data(G_VARIANT_TYPE_BYTESTRING, pixels, length, TRUE, g_free, pixels);
 		g_variant_builder_add(&pixmaps, "(ii@ay)", width, height, bytes);
 	}
@@ -284,7 +322,8 @@ Tray *create_tray(GApplication *application, GtkWindow *window, const TraySetup 
 	tray->secondary_action = g_strdup(setup->secondary_action);
 	tray->scroll_action = g_strdup(setup->scroll_action);
 	tray->bus = g_application_get_dbus_connection(application);
-	tray->pixmap = create_pixmap();
+	tray->pixmap = create_pixmap(FALSE);
+	tray->attention_pixmap = create_pixmap(TRUE);
 	tray->theme_path = write_symbolic_icon();
 	if (!tray->bus)
 		return tray;
@@ -309,6 +348,16 @@ void set_tray_label(Tray *tray, guint index, const char *label) {
 	tray->revision++;
 	g_dbus_connection_emit_signal(tray->bus, NULL, MENU_PATH, "com.canonical.dbusmenu", "LayoutUpdated",
 		g_variant_new("(ui)", tray->revision, ROOT_ID), NULL);
+}
+
+
+void set_tray_attention(Tray *tray, gboolean wants_attention) {
+	if (tray->wants_attention == wants_attention)
+		return;
+	tray->wants_attention = wants_attention;
+	if (tray->bus)
+		g_dbus_connection_emit_signal(tray->bus, NULL, ITEM_PATH, "org.kde.StatusNotifierItem", "NewIcon", NULL,
+			NULL);
 }
 
 

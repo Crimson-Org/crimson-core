@@ -23,5 +23,7 @@ typedef struct {
 Tray *create_tray(GApplication *application, GtkWindow *window, const TraySetup *setup);
 /* Changes the label of one menu entry, such as Play becoming Pause */
 void set_tray_label(Tray *tray, guint index, const char *label);
+/* Marks the icon with a glowing red dot while something waits for the user, such as a message for them */
+void set_tray_attention(Tray *tray, gboolean wants_attention);
 /* Whether a panel took the icon, since without one a hidden window could not be brought back */
 gboolean is_tray_shown(Tray *tray);
