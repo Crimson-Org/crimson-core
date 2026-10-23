@@ -1,6 +1,7 @@
 #include <adwaita.h>
 
 #include "startup.h"
+#include "button-presses.h"
 #include "frame-rate.h"
 #include "log.h"
 
@@ -50,6 +51,7 @@ static void start_up(GApplication *application) {
 	note_startup_moment("Toolkit opened");
 	gtk_window_set_default_icon_name(current_setup->identity.id);
 	load_style_resource(COMMON_STYLE);
+	match_button_press_areas();
 	if (has_style_resource(APPLICATION_STYLE))
 		load_style_resource(APPLICATION_STYLE);
 	if (current_setup->start_up)

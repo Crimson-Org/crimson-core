@@ -6,6 +6,7 @@
 ### Startup
 
 One launch path with the session log, the `--version` flag, the shared stylesheet and the app icon.\
+A press on a button's icon or label only counts inside the button's rounded outline, where a release runs its action.\
 Each ten seconds of drawing adds the frame rate, frame time and click delay to the session log.
 
 ### Settings and state
