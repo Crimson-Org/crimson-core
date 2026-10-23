@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+	<gresource prefix="/io/github/CrimsonOrg/CrimsonCore">
+		<file>themes/blitz.xml</file>
+		<file>themes/catppuccin-latte.xml</file>
+		<file>themes/catppuccin-mocha.xml</file>
+		<file>themes/crimson-monokai-light.xml</file>
+		<file>themes/crimson-monokai.xml</file>
+		<file>themes/cupcake.xml</file>
+		<file>themes/dracula.xml</file>
+		<file>themes/gruvbox-dark.xml</file>
+		<file>themes/gruvbox-light.xml</file>
+		<file>themes/nord.xml</file>
+	</gresource>
+</gresources>
