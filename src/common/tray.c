@@ -1,4 +1,5 @@
 #include <math.h>
+#include <unistd.h>
 
 #include "identity.h"
 #include "tray.h"
@@ -74,6 +75,9 @@ struct Tray {
 	char *secondary_action, *scroll_action;
 	gboolean is_shown;
 	guint revision;
+	/* The panel drops the icon as soon as the program gives up this bus name, without waiting for it to exit */
+	char *name;
+	guint name_id, watcher_id;
 };
 
 
@@ -287,13 +291,14 @@ static GVariant *create_pixmap(gboolean has_dot) {
 static void finish_registering(GObject *bus, GAsyncResult *result, gpointer data) {
 	Tray *tray = data;
 	g_autoptr(GVariant) answer = g_dbus_connection_call_finish(G_DBUS_CONNECTION(bus), result, NULL);
-	tray->is_shown = answer != NULL;
+	tray->is_shown = answer != NULL && tray->name_id;
 }
 
 
 static void register_item(GDBusConnection *bus, const char *name, const char *owner, gpointer data) {
+	Tray *tray = data;
 	g_dbus_connection_call(bus, WATCHER_NAME, WATCHER_PATH, WATCHER_NAME, "RegisterStatusNotifierItem",
-		g_variant_new("(s)", g_dbus_connection_get_unique_name(bus)), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
+		g_variant_new("(s)", tray->name), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
 		finish_registering, data);
 }
 
@@ -301,6 +306,15 @@ static void register_item(GDBusConnection *bus, const char *name, const char *ow
 static void forget_watcher(GDBusConnection *bus, const char *name, gpointer data) {
 	Tray *tray = data;
 	tray->is_shown = FALSE;
+}
+
+
+/* The panel can restart, and registering again each time its watcher appears keeps the icon there */
+static void watch_for_panel(GDBusConnection *bus, const char *name, gpointer data) {
+	Tray *tray = data;
+	if (!tray->watcher_id)
+		tray->watcher_id = g_bus_watch_name_on_connection(bus, WATCHER_NAME, G_BUS_NAME_WATCHER_FLAGS_NONE,
+			register_item, forget_watcher, tray, NULL);
 }
 
 
@@ -331,9 +345,10 @@ Tray *create_tray(GApplication *application, GtkWindow *window, const TraySetup 
 	static const GDBusInterfaceVTable MENU_TABLE = {answer_menu_call, read_menu_property, NULL, {0}};
 	export_object(tray, ITEM_PATH, ITEM_INTERFACE, &ITEM_TABLE);
 	export_object(tray, MENU_PATH, MENU_INTERFACE, &MENU_TABLE);
-	/* The panel can restart, and registering again each time its watcher appears keeps the icon there */
-	g_bus_watch_name_on_connection(tray->bus, WATCHER_NAME, G_BUS_NAME_WATCHER_FLAGS_NONE, register_item,
-		forget_watcher, tray, NULL);
+	/* The tray protocol names each icon's bus name after the process and a count */
+	tray->name = g_strdup_printf("org.kde.StatusNotifierItem-%d-1", (int)getpid());
+	tray->name_id = g_bus_own_name_on_connection(tray->bus, tray->name, G_BUS_NAME_OWNER_FLAGS_NONE,
+		watch_for_panel, NULL, tray, NULL);
 	return tray;
 }
 
@@ -363,4 +378,11 @@ void set_tray_attention(Tray *tray, gboolean wants_attention) {
 
 gboolean is_tray_shown(Tray *tray) {
 	return tray->is_shown;
+}
+
+
+void remove_tray(Tray *tray) {
+	g_clear_handle_id(&tray->watcher_id, g_bus_unwatch_name);
+	g_clear_handle_id(&tray->name_id, g_bus_unown_name);
+	tray->is_shown = FALSE;
 }
