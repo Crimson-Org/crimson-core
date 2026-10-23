@@ -9,3 +9,6 @@ typedef void (*SidebarResized)(int width, gpointer data);
  * widths, and returns the widget to place where the split view was */
 GtkWidget *add_sidebar_handle(AdwOverlaySplitView *split, int width, int minimum, int maximum,
 	SidebarResized resized, gpointer data);
+/* The same handle for a navigation split view, which only shows while the sidebar is docked beside the content */
+GtkWidget *add_navigation_sidebar_handle(AdwNavigationSplitView *split, int width, int minimum, int maximum,
+	SidebarResized resized, gpointer data);

@@ -18,7 +18,8 @@ Mouse wheel steps glide in either direction, Shift scrolls sideways and touchpad
 
 ### Sidebar width
 
-A handle on the sidebar's edge drags it wider or narrower, and the app keeps the width for the next launch.
+A handle on the sidebar's edge drags it wider or narrower, and the app keeps the width for the next launch.\
+It works with both an overlay and a navigation split view, showing only while the sidebar is docked.
 
 ### Long lines
 

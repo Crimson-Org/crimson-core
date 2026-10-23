@@ -5,7 +5,8 @@
 
 /* One split view's handle, the limits it keeps to and where a drag started */
 typedef struct {
-	AdwOverlaySplitView *split;
+	/* An AdwOverlaySplitView or an AdwNavigationSplitView */
+	GtkWidget *split;
 	GtkWidget *handle;
 	int width, minimum, maximum, drag_start;
 	SidebarResized resized;
@@ -15,16 +16,28 @@ typedef struct {
 
 static void set_width(SidebarHandle *sidebar, int width) {
 	sidebar->width = CLAMP(width, sidebar->minimum, sidebar->maximum);
-	adw_overlay_split_view_set_min_sidebar_width(sidebar->split, sidebar->width);
-	adw_overlay_split_view_set_max_sidebar_width(sidebar->split, sidebar->width);
+	if (ADW_IS_OVERLAY_SPLIT_VIEW(sidebar->split)) {
+		adw_overlay_split_view_set_min_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(sidebar->split), sidebar->width);
+		adw_overlay_split_view_set_max_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(sidebar->split), sidebar->width);
+	} else {
+		adw_navigation_split_view_set_min_sidebar_width(ADW_NAVIGATION_SPLIT_VIEW(sidebar->split), sidebar->width);
+		adw_navigation_split_view_set_max_sidebar_width(ADW_NAVIGATION_SPLIT_VIEW(sidebar->split), sidebar->width);
+	}
 	gtk_widget_set_margin_start(sidebar->handle, sidebar->width - HANDLE_PIXELS / 2);
 }
 
 
-/* A collapsed sidebar lies over the content or is hidden, so only a docked one can be dragged */
+/* A collapsed sidebar lies over the content, is hidden or fills the window as its own page, so only a docked one
+ * can be dragged */
 static void update_handle(SidebarHandle *sidebar) {
-	gtk_widget_set_visible(sidebar->handle, !adw_overlay_split_view_get_collapsed(sidebar->split)
-		&& adw_overlay_split_view_get_show_sidebar(sidebar->split));
+	if (ADW_IS_OVERLAY_SPLIT_VIEW(sidebar->split)) {
+		AdwOverlaySplitView *split = ADW_OVERLAY_SPLIT_VIEW(sidebar->split);
+		gtk_widget_set_visible(sidebar->handle, !adw_overlay_split_view_get_collapsed(split)
+			&& adw_overlay_split_view_get_show_sidebar(split));
+	} else {
+		gtk_widget_set_visible(sidebar->handle,
+			!adw_navigation_split_view_get_collapsed(ADW_NAVIGATION_SPLIT_VIEW(sidebar->split)));
+	}
 }
 
 
@@ -45,8 +58,8 @@ static void end_drag(GtkGestureDrag *drag, double x, double y, SidebarHandle *si
 }
 
 
-GtkWidget *add_sidebar_handle(AdwOverlaySplitView *split, int width, int minimum, int maximum,
-	SidebarResized resized, gpointer data) {
+static GtkWidget *attach_handle(GtkWidget *split, int width, int minimum, int maximum, SidebarResized resized,
+	gpointer data) {
 	SidebarHandle *sidebar = g_new0(SidebarHandle, 1);
 	*sidebar = (SidebarHandle){split, gtk_box_new(GTK_ORIENTATION_VERTICAL, 0), width, minimum, maximum, 0,
 		resized, data};
@@ -64,8 +77,21 @@ GtkWidget *add_sidebar_handle(AdwOverlaySplitView *split, int width, int minimum
 	gtk_overlay_add_overlay(GTK_OVERLAY(overlay), sidebar->handle);
 	g_object_set_data_full(G_OBJECT(overlay), "sidebar-handle", sidebar, g_free);
 	g_signal_connect_swapped(split, "notify::collapsed", G_CALLBACK(update_handle), sidebar);
-	g_signal_connect_swapped(split, "notify::show-sidebar", G_CALLBACK(update_handle), sidebar);
+	if (ADW_IS_OVERLAY_SPLIT_VIEW(split))
+		g_signal_connect_swapped(split, "notify::show-sidebar", G_CALLBACK(update_handle), sidebar);
 	set_width(sidebar, width);
 	update_handle(sidebar);
 	return overlay;
+}
+
+
+GtkWidget *add_sidebar_handle(AdwOverlaySplitView *split, int width, int minimum, int maximum,
+	SidebarResized resized, gpointer data) {
+	return attach_handle(GTK_WIDGET(split), width, minimum, maximum, resized, data);
+}
+
+
+GtkWidget *add_navigation_sidebar_handle(AdwNavigationSplitView *split, int width, int minimum, int maximum,
+	SidebarResized resized, gpointer data) {
+	return attach_handle(GTK_WIDGET(split), width, minimum, maximum, resized, data);
 }
