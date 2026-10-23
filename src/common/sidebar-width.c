@@ -41,7 +41,19 @@ static void update_handle(SidebarHandle *sidebar) {
 }
 
 
+/* The drag is watched on the overlay, which stays put, since the handle moves under the pointer as the sidebar
+ * resizes and offsets measured on it would fall behind; it only starts on the handle itself */
 static void start_drag(GtkGestureDrag *drag, double x, double y, SidebarHandle *sidebar) {
+	GtkWidget *overlay = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(drag));
+	graphene_rect_t bounds;
+	gboolean is_on_handle = gtk_widget_get_visible(sidebar->handle)
+		&& gtk_widget_compute_bounds(sidebar->handle, overlay, &bounds)
+		&& graphene_rect_contains_point(&bounds, &GRAPHENE_POINT_INIT((float)x, (float)y));
+	if (!is_on_handle) {
+		gtk_gesture_set_state(GTK_GESTURE(drag), GTK_EVENT_SEQUENCE_DENIED);
+		return;
+	}
+	gtk_gesture_set_state(GTK_GESTURE(drag), GTK_EVENT_SEQUENCE_CLAIMED);
 	sidebar->drag_start = sidebar->width;
 }
 
@@ -71,8 +83,9 @@ static GtkWidget *attach_handle(GtkWidget *split, int width, int minimum, int ma
 	g_signal_connect(drag, "drag-begin", G_CALLBACK(start_drag), sidebar);
 	g_signal_connect(drag, "drag-update", G_CALLBACK(follow_drag), sidebar);
 	g_signal_connect(drag, "drag-end", G_CALLBACK(end_drag), sidebar);
-	gtk_widget_add_controller(sidebar->handle, GTK_EVENT_CONTROLLER(drag));
 	GtkWidget *overlay = gtk_overlay_new();
+	gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(drag), GTK_PHASE_CAPTURE);
+	gtk_widget_add_controller(overlay, GTK_EVENT_CONTROLLER(drag));
 	gtk_overlay_set_child(GTK_OVERLAY(overlay), GTK_WIDGET(split));
 	gtk_overlay_add_overlay(GTK_OVERLAY(overlay), sidebar->handle);
 	g_object_set_data_full(G_OBJECT(overlay), "sidebar-handle", sidebar, g_free);
