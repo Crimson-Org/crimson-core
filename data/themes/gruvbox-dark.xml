@@ -71,4 +71,5 @@
 	<style name="diff:removed-line" foreground="error"/>
 	<style name="diff:changed-line" foreground="note"/>
 	<style name="diff:location" foreground="type"/>
+	<style name="crimson:accent" background="#fe8019"/>
 </style-scheme>

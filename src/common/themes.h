@@ -11,6 +11,7 @@
 
 /* Which parts of the window take the theme's colours */
 typedef enum {
+	/* Header bars and toolbar views with the title-bar class */
 	THEME_TITLE_BAR = 1 << 0,
 	/* Window, views, popovers, dialogs, cards, sidebars and the status bar */
 	THEME_WINDOW = 1 << 1,

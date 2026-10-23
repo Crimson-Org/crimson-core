@@ -14,6 +14,8 @@
 #define LIFT_SHADE 0.06
 #define DARK_CARD_SHADE 0.05
 #define LIGHT_CARD_SHADE 0.6
+/* Above this luminance an accent takes dark text instead of white */
+#define BRIGHT_ACCENT 0.5
 
 /* One style as the theme file writes it, with colours that may still name the palette */
 typedef struct {
@@ -312,22 +314,38 @@ static double get_luminance(const GdkRGBA *colour) {
 }
 
 
+/* Buttons, selections and marks take the theme's accent, with text in its own colour or one that reads on it */
+static void append_accent(GString *css, const ThemeFile *file) {
+	GdkRGBA accent, on_accent = {1, 1, 1, 1};
+	if (!get_style_colour(file, "crimson:accent", TRUE, &accent, 0))
+		return;
+	gboolean is_text_darker = get_luminance(&text_foreground) < get_luminance(&text_background);
+	if (!get_style_colour(file, "crimson:accent", FALSE, &on_accent, 0) && get_luminance(&accent) > BRIGHT_ACCENT)
+		on_accent = is_text_darker ? text_foreground : text_background;
+	append_variables(css, "accent", &accent, &on_accent);
+}
+
+
 static void append_window_colours(GString *css, const ThemeFile *file, gboolean is_dark) {
 	GdkRGBA background, foreground;
+	/* Lists and panels may sit on a grey of their own, while text views keep the code background */
+	GdkRGBA window_background, window_foreground;
+	get_part_colours(file, "crimson:window", 0, is_dark, &window_background, &window_foreground);
 	g_string_append(css, ":root {\n");
-	append_variables(css, "window", &text_background, &text_foreground);
+	append_variables(css, "window", &window_background, &window_foreground);
 	append_variables(css, "view", &text_background, &text_foreground);
 	/* Popovers and dialogs float above the window, so they sit a little lighter in dark themes and darker in
 	 * light */
-	GdkRGBA raised = shade(text_background, LIFT_SHADE, !is_dark);
-	append_variables(css, "popover", &raised, &text_foreground);
-	append_variables(css, "dialog", &raised, &text_foreground);
+	GdkRGBA raised = shade(window_background, LIFT_SHADE, !is_dark);
+	append_variables(css, "popover", &raised, &window_foreground);
+	append_variables(css, "dialog", &raised, &window_foreground);
 	/* Cards such as settings rows sit just lighter than the window, which libadwaita would otherwise colour for its
 	 * own style even when the theme is the opposite */
-	GdkRGBA card = shade(text_background, is_dark ? DARK_CARD_SHADE : LIGHT_CARD_SHADE, FALSE);
-	append_variables(css, "card", &card, &text_foreground);
-	append_variables(css, "thumbnail", &card, &text_foreground);
-	append_variables(css, "overview", &text_background, &text_foreground);
+	GdkRGBA card = shade(window_background, is_dark ? DARK_CARD_SHADE : LIGHT_CARD_SHADE, FALSE);
+	append_variables(css, "card", &card, &window_foreground);
+	append_variables(css, "thumbnail", &card, &window_foreground);
+	append_variables(css, "overview", &window_background, &window_foreground);
+	append_accent(css, file);
 	if (get_part_colours(file, "crimson:titlebar", BAR_SHADE, is_dark, &background, &foreground)) {
 		append_variables(css, "headerbar", &background, &foreground);
 		append_backdrop(css, "headerbar", &background);
@@ -357,10 +375,10 @@ static void apply_themes(gboolean has_read_files) {
 	if (has_text_colours && coloured_parts & THEME_WINDOW)
 		append_window_colours(css, file, is_dark);
 	/* Bars inside a toolbar view draw the window colour rather than the header bar one, so the title bar gets its
-	 * colour directly */
+	 * colour directly, and a toolbar view marked title-bar paints it too since the bar fades while unfocused */
 	if (has_text_colours && coloured_parts & THEME_TITLE_BAR
 		&& get_part_colours(file, "crimson:titlebar", BAR_SHADE, is_dark, &background, &foreground))
-		append_rule(css, "headerbar.title-bar", &background, &foreground);
+		append_rule(css, "headerbar.title-bar, toolbarview.title-bar > .top-bar", &background, &foreground);
 	if (!theme_style) {
 		theme_style = gtk_css_provider_new();
 		gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(theme_style),

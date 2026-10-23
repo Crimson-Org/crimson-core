@@ -59,4 +59,5 @@
 	<style name="diff:added-line" foreground="string"/>
 	<style name="diff:removed-line" foreground="comment"/>
 	<style name="diff:location" foreground="keyword"/>
+	<style name="crimson:accent" background="#33ffdd"/>
 </style-scheme>
