@@ -6,7 +6,6 @@
 #include "log.h"
 
 #define COMMON_STYLE "common.css"
-#define APPLICATION_STYLE "style.css"
 
 static const ApplicationSetup *current_setup;
 
@@ -32,12 +31,6 @@ void run_after_frame(GtkWidget *widget, GSourceFunc function, gpointer data) {
 }
 
 
-static gboolean has_style_resource(const char *name) {
-	g_autofree char *path = get_resource_path(name);
-	return g_resources_get_info(path, G_RESOURCE_LOOKUP_FLAGS_NONE, NULL, NULL, NULL);
-}
-
-
 void load_style_resource(const char *name) {
 	g_autofree char *path = get_resource_path(name);
 	g_autoptr(GtkCssProvider) style = gtk_css_provider_new();
@@ -50,10 +43,9 @@ void load_style_resource(const char *name) {
 static void start_up(GApplication *application) {
 	note_startup_moment("Toolkit opened");
 	gtk_window_set_default_icon_name(current_setup->identity.id);
+	/* AdwApplication loads the program's own style.css from its resources, so only the shared one is added here */
 	load_style_resource(COMMON_STYLE);
 	match_button_press_areas();
-	if (has_style_resource(APPLICATION_STYLE))
-		load_style_resource(APPLICATION_STYLE);
 	if (current_setup->start_up)
 		current_setup->start_up(application);
 	note_startup_moment("Toolkit started");
