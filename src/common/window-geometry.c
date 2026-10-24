@@ -33,3 +33,10 @@ void read_window_geometry(GtkWindow *window, WindowGeometry *geometry) {
 	gtk_window_get_default_size(window, &geometry->width, &geometry->height);
 	geometry->is_maximized = gtk_window_is_maximized(window);
 }
+
+
+void hide_closing_window(GtkWindow *window) {
+	gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+	/* The display only hears of it when the main loop runs again, which waits for the closing work after this */
+	gdk_display_flush(gtk_widget_get_display(GTK_WIDGET(window)));
+}
