@@ -5,7 +5,7 @@
 
 /* One split view's handle, the limits it keeps to and where a drag started */
 typedef struct {
-	/* An AdwOverlaySplitView or an AdwNavigationSplitView */
+	/* An AdwOverlaySplitView, an AdwNavigationSplitView or panes */
 	GtkWidget *split;
 	GtkWidget *handle;
 	int width, minimum, maximum, drag_start;
@@ -19,6 +19,8 @@ static void set_width(SidebarHandle *sidebar, int width) {
 	if (ADW_IS_OVERLAY_SPLIT_VIEW(sidebar->split)) {
 		adw_overlay_split_view_set_min_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(sidebar->split), sidebar->width);
 		adw_overlay_split_view_set_max_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(sidebar->split), sidebar->width);
+	} else if (CRIMSON_IS_PANES(sidebar->split)) {
+		crimson_panes_set_sidebar_width(CRIMSON_PANES(sidebar->split), sidebar->width);
 	} else {
 		adw_navigation_split_view_set_min_sidebar_width(ADW_NAVIGATION_SPLIT_VIEW(sidebar->split), sidebar->width);
 		adw_navigation_split_view_set_max_sidebar_width(ADW_NAVIGATION_SPLIT_VIEW(sidebar->split), sidebar->width);
@@ -34,6 +36,8 @@ static void update_handle(SidebarHandle *sidebar) {
 		AdwOverlaySplitView *split = ADW_OVERLAY_SPLIT_VIEW(sidebar->split);
 		gtk_widget_set_visible(sidebar->handle, !adw_overlay_split_view_get_collapsed(split)
 			&& adw_overlay_split_view_get_show_sidebar(split));
+	} else if (CRIMSON_IS_PANES(sidebar->split)) {
+		gtk_widget_set_visible(sidebar->handle, !crimson_panes_get_collapsed(CRIMSON_PANES(sidebar->split)));
 	} else {
 		gtk_widget_set_visible(sidebar->handle,
 			!adw_navigation_split_view_get_collapsed(ADW_NAVIGATION_SPLIT_VIEW(sidebar->split)));
@@ -107,4 +111,10 @@ GtkWidget *add_sidebar_handle(AdwOverlaySplitView *split, int width, int minimum
 GtkWidget *add_navigation_sidebar_handle(AdwNavigationSplitView *split, int width, int minimum, int maximum,
 	SidebarResized resized, gpointer data) {
 	return attach_handle(GTK_WIDGET(split), width, minimum, maximum, resized, data);
+}
+
+
+GtkWidget *add_panes_sidebar_handle(CrimsonPanes *panes, int width, int minimum, int maximum, SidebarResized resized,
+	gpointer data) {
+	return attach_handle(GTK_WIDGET(panes), width, minimum, maximum, resized, data);
 }
