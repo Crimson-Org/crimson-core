@@ -38,6 +38,7 @@ static const char ITEM_INTERFACE[] =
 	"<method name='SecondaryActivate'><arg type='i' direction='in'/><arg type='i' direction='in'/></method>"
 	"<method name='ContextMenu'><arg type='i' direction='in'/><arg type='i' direction='in'/></method>"
 	"<method name='Scroll'><arg type='i' direction='in'/><arg type='s' direction='in'/></method>"
+	"<method name='ProvideXdgActivationToken'><arg type='s' direction='in'/></method>"
 	"<signal name='NewToolTip'/>"
 	"<signal name='NewIcon'/>"
 	"</interface></node>";
@@ -74,6 +75,8 @@ struct Tray {
 	GPtrArray *labels, *actions;
 	char *secondary_action, *scroll_action;
 	gboolean is_shown;
+	/* The panel sends a token before a click, without which the compositor will not bring the window forward */
+	char *activation_token;
 	guint revision;
 	/* The panel drops the icon as soon as the program gives up this bus name, without waiting for it to exit */
 	char *name;
@@ -150,8 +153,12 @@ static GVariant *read_menu_property(GDBusConnection *bus, const char *sender, co
 static void toggle_window(Tray *tray) {
 	if (gtk_widget_get_visible(GTK_WIDGET(tray->window)) && gtk_window_is_active(tray->window))
 		gtk_widget_set_visible(GTK_WIDGET(tray->window), FALSE);
-	else
+	else {
+		if (tray->activation_token)
+			gtk_window_set_startup_id(tray->window, tray->activation_token);
 		gtk_window_present(tray->window);
+	}
+	g_clear_pointer(&tray->activation_token, g_free);
 }
 
 
@@ -178,6 +185,10 @@ static void answer_item_call(GDBusConnection *bus, const char *sender, const cha
 		run_window_action(tray, tray->secondary_action);
 	else if (g_str_equal(method, "Scroll"))
 		scroll_icon(tray, parameters);
+	else if (g_str_equal(method, "ProvideXdgActivationToken")) {
+		g_free(tray->activation_token);
+		g_variant_get(parameters, "(s)", &tray->activation_token);
+	}
 	g_dbus_method_invocation_return_value(invocation, NULL);
 }
 
