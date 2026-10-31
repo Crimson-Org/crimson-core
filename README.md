@@ -4,9 +4,9 @@
 ## Why
 
 All Crimson apps start, scroll, save their settings and follow the theme the same way.\
-That code lives here once, so a fix reaches every app.
+That code lives here, so a fix applies to all apps at once.
 
-## Features
+## About
 
 ### Startup
 
@@ -34,7 +34,7 @@ A panel icon shows or hides the window, and its right click menu runs the progra
 
 ### Themes
 
-Crimson Monokai, Blitz, Dracula, Nord, Gruvbox, Catppuccin and Cupcake colour the window, sidebar and title bar of each app.\
+Crimson Monokai, Crimson Monokai Light, Blitz, Dracula, Nord, Gruvbox, Catppuccin and Cupcake colour the window, sidebar and title bar of each app.\
 They are GtkSourceView style schemes, so a theme saved in `~/.local/share/gtksourceview-5/styles` shows up in all Crimson apps and GtkSourceView editors.\
 The `crimson:window`, `crimson:titlebar`, `crimson:sidebar`, `crimson:statusbar` and `crimson:accent` styles colour those parts.
 
