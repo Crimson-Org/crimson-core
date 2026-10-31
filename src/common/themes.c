@@ -16,6 +16,10 @@
 #define LIGHT_CARD_SHADE 0.6
 /* Above this luminance an accent takes dark text instead of white */
 #define BRIGHT_ACCENT 0.5
+/* The background of a window without a theme, a dark grey or white */
+#define PLAIN_DARK_BACKGROUND 0.12f
+/* Backgrounds darker than this luminance count as dark */
+#define DARK_LUMINANCE 0.5
 
 /* One style as the theme file writes it, with colours that may still name the palette */
 typedef struct {
@@ -272,7 +276,8 @@ static GdkRGBA shade(GdkRGBA colour, double amount, gboolean is_dark) {
  * It is left alone when the theme gives no text colour to go with it */
 static gboolean get_part_colours(const ThemeFile *file, const char *style, double amount, gboolean is_dark,
 	GdkRGBA *background, GdkRGBA *foreground) {
-	GdkRGBA plain_background = {is_dark ? 0.12f : 1, is_dark ? 0.12f : 1, is_dark ? 0.12f : 1, 1};
+	float plain_shade = is_dark ? PLAIN_DARK_BACKGROUND : 1;
+	GdkRGBA plain_background = {plain_shade, plain_shade, plain_shade, 1};
 	GdkRGBA plain_foreground;
 	get_style_colour(file, "text", TRUE, &plain_background, 0);
 	gboolean has_foreground = get_style_colour(file, "text", FALSE, &plain_foreground, 0);
@@ -370,7 +375,7 @@ static void apply_themes(gboolean has_read_files) {
 	/* A light theme may be chosen for the dark style or the other way round, so shading follows the theme */
 	GdkRGBA background, foreground;
 	if (get_style_colour(file, "text", TRUE, &background, 0))
-		is_dark = get_luminance(&background) < 0.5;
+		is_dark = get_luminance(&background) < DARK_LUMINANCE;
 	g_autoptr(GString) css = g_string_new(NULL);
 	if (has_text_colours && coloured_parts & THEME_WINDOW)
 		append_window_colours(css, file, is_dark);

@@ -6,6 +6,9 @@
 char *get_config_file_path(const char *file_name);
 char *get_state_file_path(const char *file_name);
 
+/* Makes a folder only this user can open, with any missing parents, and says whether the folder is there now */
+gboolean make_private_folder(const char *path);
+
 /* Returns an empty file when the path is missing or unreadable, so callers keep their defaults */
 GKeyFile *load_key_file(const char *path, GKeyFileFlags flags);
 void save_key_file(GKeyFile *file, const char *path);

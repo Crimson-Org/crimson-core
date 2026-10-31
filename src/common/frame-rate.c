@@ -5,13 +5,13 @@
 /* Each summary covers at least this much time spent drawing */
 #define SUMMARY_MICROSECONDS (10 * G_USEC_PER_SEC)
 /* A longer pause between frames is the window resting, not a slow frame */
-#define REST_MICROSECONDS (250 * 1000)
+#define REST_MICROSECONDS (250 * G_TIME_SPAN_MILLISECOND)
 /* A gap this many refreshes long means the screen showed the same picture again at least once */
 #define MISSED_REFRESH_SHARE 1.5
 /* Work longer than this many microseconds in one frame is counted as heavy, since 120 Hz leaves 8.3 ms */
 #define HEAVY_WORK_MICROSECONDS 8000
 /* A click or key whose result takes longer than this to reach the screen is written down on its own */
-#define SLOW_RESPONSE_MICROSECONDS (100 * 1000)
+#define SLOW_RESPONSE_MICROSECONDS (100 * G_TIME_SPAN_MILLISECOND)
 
 /* The window checks in this often, and a check this late means it could not answer or draw in the meantime */
 #define HEARTBEAT_MILLISECONDS 100
@@ -28,16 +28,22 @@ typedef struct {
 } FrameRecord;
 
 
+static double to_milliseconds(gint64 microseconds) {
+	return microseconds / (double)G_TIME_SPAN_MILLISECOND;
+}
+
+
 static void write_summary(FrameRecord *record) {
 	double seconds = (double)record->drawing_time / G_USEC_PER_SEC;
 	double refresh_rate = record->refresh_interval ? (double)G_USEC_PER_SEC / record->refresh_interval : 0;
-	double response = record->responses ? record->response_time / 1000.0 / record->responses : 0;
+	double response = record->responses ? to_milliseconds(record->response_time) / record->responses : 0;
 	g_debug("Frames %u in %.1f s of drawing at %.1f fps on a %.0f Hz screen, %u refreshes missed, "
 		"slowest gap %.1f ms, work %.2f ms on average and %.2f ms at most, %u heavy frames, "
 		"%u clicks and keys answered in %.1f ms on average and %.1f ms at most",
 		record->frames, seconds, record->frames / seconds, refresh_rate, record->missed_refreshes,
-		record->slowest_gap / 1000.0, record->work_time / 1000.0 / record->frames, record->heaviest_work / 1000.0,
-		record->heavy_frames, record->responses, response, record->slowest_response / 1000.0);
+		to_milliseconds(record->slowest_gap), to_milliseconds(record->work_time) / record->frames,
+		to_milliseconds(record->heaviest_work), record->heavy_frames, record->responses, response,
+		to_milliseconds(record->slowest_response));
 	*record = (FrameRecord){.last_frame_time = record->last_frame_time, .input_time = record->input_time};
 }
 
@@ -50,7 +56,7 @@ static void note_response(FrameRecord *record) {
 	record->response_time += response;
 	record->slowest_response = MAX(record->slowest_response, response);
 	if (response > SLOW_RESPONSE_MICROSECONDS)
-		g_debug("Slow answer to a click or key, %.1f ms until the next frame", response / 1000.0);
+		g_debug("Slow answer to a click or key, %.1f ms until the next frame", to_milliseconds(response));
 }
 
 
@@ -91,9 +97,9 @@ static void finish_frame(GdkFrameClock *clock, FrameRecord *record) {
 static gboolean check_heartbeat(gpointer data) {
 	gint64 *last_beat = data;
 	gint64 now = g_get_monotonic_time();
-	gint64 late = now - *last_beat - HEARTBEAT_MILLISECONDS * 1000;
+	gint64 late = now - *last_beat - HEARTBEAT_MILLISECONDS * G_TIME_SPAN_MILLISECOND;
 	if (late > HELD_MICROSECONDS)
-		g_debug("Window held up for %.0f ms", late / 1000.0);
+		g_debug("Window held up for %.0f ms", to_milliseconds(late));
 	*last_beat = now;
 	return G_SOURCE_CONTINUE;
 }

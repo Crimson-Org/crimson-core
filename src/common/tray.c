@@ -2,6 +2,7 @@
 #include <unistd.h>
 
 #include "identity.h"
+#include "key-store.h"
 #include "tray.h"
 
 #define WHEEL_NOTCH 120
@@ -16,6 +17,10 @@
 #define DOT_RED 232
 #define DOT_GREEN 32
 #define DOT_BLUE 60
+/* How strong the dot's glow starts, fading out over DOT_GLOW pixels */
+#define DOT_GLOW_STRENGTH 0.55
+/* Tray icons are ARGB, four bytes a pixel */
+#define BYTES_PER_PIXEL 4
 #define SYMBOLIC_FOLDER "icons/hicolor/symbolic/apps"
 #define SYMBOLIC_SUFFIX "-symbolic"
 #define DBUSMENU_VERSION 3
@@ -236,7 +241,7 @@ static char *write_symbolic_icon(void) {
 	g_autofree char *resource_path = get_resource_path(resource);
 	g_autoptr(GBytes) icon = g_resources_lookup_data(resource_path, G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
 	g_autofree char *path = g_build_filename(folder, name, NULL);
-	if (icon && g_mkdir_with_parents(folder, 0700) == 0)
+	if (icon && make_private_folder(folder))
 		g_file_set_contents(path, g_bytes_get_data(icon, NULL), (gssize)g_bytes_get_size(icon), NULL);
 	return g_steal_pointer(&base);
 }
@@ -249,16 +254,16 @@ static void draw_attention_dot(guchar *pixels, int width, int height) {
 		for (int column = 0; column < width; column++) {
 			double distance = hypot(column + 0.5 - centre_x, row + 0.5 - centre_y);
 			double cover = distance <= DOT_RADIUS ? 1 : distance <= DOT_RADIUS + DOT_GLOW
-				? 0.55 * (1 - (distance - DOT_RADIUS) / DOT_GLOW) : 0;
+				? DOT_GLOW_STRENGTH * (1 - (distance - DOT_RADIUS) / DOT_GLOW) : 0;
 			if (cover <= 0)
 				continue;
-			guchar *pixel = pixels + ((gsize)row * width + column) * 4;
-			double below = pixel[0] / 255.0 * (1 - cover);
+			guchar *pixel = pixels + ((gsize)row * width + column) * BYTES_PER_PIXEL;
+			double below = pixel[0] / (double)G_MAXUINT8 * (1 - cover);
 			double alpha = cover + below;
 			pixel[1] = (guchar)lround((DOT_RED * cover + pixel[1] * below) / alpha);
 			pixel[2] = (guchar)lround((DOT_GREEN * cover + pixel[2] * below) / alpha);
 			pixel[3] = (guchar)lround((DOT_BLUE * cover + pixel[3] * below) / alpha);
-			pixel[0] = (guchar)lround(alpha * 255);
+			pixel[0] = (guchar)lround(alpha * G_MAXUINT8);
 		}
 	}
 }
@@ -277,13 +282,13 @@ static GVariant *create_pixmap(gboolean has_dot) {
 		int width = gdk_pixbuf_get_width(image), height = gdk_pixbuf_get_height(image);
 		int stride = gdk_pixbuf_get_rowstride(image);
 		const guchar *source = gdk_pixbuf_read_pixels(image);
-		gsize length = (gsize)width * (gsize)height * 4;
+		gsize length = (gsize)width * (gsize)height * BYTES_PER_PIXEL;
 		guchar *pixels = g_malloc(length);
 		/* The tray protocol wants alpha first, while the image holds it last */
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
 				const guchar *from = source + row * stride + column * 4;
-				guchar *to = pixels + ((gsize)row * width + column) * 4;
+				guchar *to = pixels + ((gsize)row * width + column) * BYTES_PER_PIXEL;
 				to[0] = from[3];
 				to[1] = from[0];
 				to[2] = from[1];

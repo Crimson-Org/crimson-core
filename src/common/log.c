@@ -9,6 +9,14 @@
 #include "log.h"
 
 #define MAXIMUM_LOG_BYTES (1024 * 1024)
+/* Logs may hold paths and names, so only this user reads them */
+#define PRIVATE_FILE_MODE 0600
+#define NANOSECONDS_PER_MICROSECOND 1000
+#define DECIMAL_BASE 10
+/* In /proc/self/stat the fields after the command name start two characters past its closing bracket */
+/* The start time is the twentieth of those fields, in clock ticks */
+#define STAT_FIELDS_OFFSET 2
+#define STAT_START_TIME_FIELD 19
 
 static FILE *session_log;
 static GLogFunc previous_handler;
@@ -38,7 +46,7 @@ static void write_message(const char *domain, GLogLevelFlags level, const char *
 static gint64 get_boot_microseconds(void) {
 	struct timespec now;
 	clock_gettime(CLOCK_BOOTTIME, &now);
-	return now.tv_sec * G_USEC_PER_SEC + now.tv_nsec / 1000;
+	return now.tv_sec * G_USEC_PER_SEC + now.tv_nsec / NANOSECONDS_PER_MICROSECOND;
 }
 
 
@@ -47,11 +55,10 @@ static gint64 get_process_start(void) {
 	g_autofree char *status = NULL;
 	if (!g_file_get_contents("/proc/self/stat", &status, NULL, NULL) || !strrchr(status, ')'))
 		return get_boot_microseconds();
-	g_auto(GStrv) fields = g_strsplit(strrchr(status, ')') + 2, " ", -1);
-	/* The start time is the twentieth field after the command name, in clock ticks */
-	if (g_strv_length(fields) < 20)
+	g_auto(GStrv) fields = g_strsplit(strrchr(status, ')') + STAT_FIELDS_OFFSET, " ", -1);
+	if (g_strv_length(fields) <= STAT_START_TIME_FIELD)
 		return get_boot_microseconds();
-	return g_ascii_strtoll(fields[19], NULL, 10) * G_USEC_PER_SEC / sysconf(_SC_CLK_TCK);
+	return g_ascii_strtoll(fields[STAT_START_TIME_FIELD], NULL, DECIMAL_BASE) * G_USEC_PER_SEC / sysconf(_SC_CLK_TCK);
 }
 
 
@@ -72,7 +79,7 @@ static FILE *open_log_file(const char *slug) {
 		return NULL;
 	FILE *file = g_fopen(current_path, "w");
 	if (file)
-		g_chmod(current_path, 0600);
+		g_chmod(current_path, PRIVATE_FILE_MODE);
 	return file;
 }
 
@@ -99,5 +106,6 @@ void stop_session_log(void) {
 
 
 void note_startup_moment(const char *moment) {
-	g_debug("%s after %" G_GINT64_FORMAT " ms", moment, (g_get_monotonic_time() - start_time) / 1000);
+	gint64 milliseconds = (g_get_monotonic_time() - start_time) / G_TIME_SPAN_MILLISECOND;
+	g_debug("%s after %" G_GINT64_FORMAT " ms", moment, milliseconds);
 }
