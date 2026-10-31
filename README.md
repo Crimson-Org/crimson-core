@@ -22,7 +22,7 @@ Mouse wheel steps glide, Shift scrolls sideways and touchpads keep their exact m
 
 ### Sidebar width
 
-Drag the sidebar edge to resize it, and the app keeps the width for the next launch.
+Dragging the sidebar edge changes the sidebar width, and the app keeps that width for the next launch.
 
 ### Long lines
 
@@ -30,7 +30,7 @@ Very long lines show in pieces, so a minified file opens without freezing and sa
 
 ### Tray
 
-The panel icon shows or hides the window, and its menu runs the app's actions.
+The panel icon shows or hides the window, and the icon's menu runs the app's actions.
 
 ### Themes
 
@@ -40,7 +40,7 @@ The `crimson:window`, `crimson:titlebar`, `crimson:sidebar`, `crimson:statusbar`
 
 ### Loading
 
-A spinner that fades in after half a second, and a fade-in for content when it loads.
+A spinner that fades in after half a second, and content that fades in once loaded.
 
 ## Building
 
