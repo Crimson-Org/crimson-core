@@ -4,7 +4,6 @@
 #include "key-store.h"
 
 #define PRIVATE_FOLDER_MODE 0700
-#define PRIVATE_FILE_MODE 0600
 
 
 char *get_config_file_path(const char *file_name) {

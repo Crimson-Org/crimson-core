@@ -2,6 +2,9 @@
 
 #include <glib.h>
 
+/* Files that hold sign ins, passwords or logs are for this user only */
+#define PRIVATE_FILE_MODE 0600
+
 /* Settings live in the user's config folder and window layout in the state folder, both under the program name */
 char *get_config_file_path(const char *file_name);
 char *get_state_file_path(const char *file_name);
