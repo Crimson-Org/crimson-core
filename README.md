@@ -1,50 +1,46 @@
 <h1 align="center">Crimson Core</h1>
-<p align="center">The code every Crimson app builds on.</p>
+<p align="center">The shared C library every Crimson app uses.</p>
 
 ## Why
 
-All Crimson apps start, scroll, save their settings and follow the theme the same way.\
-That code lives here, so a fix applies to all apps at once.
+All Crimson apps share this code for starting, scrolling, saving settings and themes.\
+A fix here applies to all apps at once.
 
 ## About
 
 ### Startup
 
-One launch path with the session log, the `--version` flag, the shared stylesheet and the app icon.
+One launch path for the session log, the `--version` flag, the shared stylesheet and the app icon.
 
 ### Settings and state
 
-Per app config and state files, and the window size kept between launches.
+Config and state files for each app, including the window size between launches.
 
 ### Smooth scrolling
 
-Mouse wheel steps glide in either direction, Shift scrolls sideways and touchpads keep their exact motion.
+Mouse wheel steps glide, Shift scrolls sideways and touchpads keep their exact motion.
 
 ### Sidebar width
 
-A handle on the sidebar's edge drags it wider or narrower, and the app keeps the width for the next launch.
+Drag the sidebar edge to resize it, and the app keeps the width for the next launch.
 
 ### Long lines
 
-Very long lines show as pieces, so a minified file opens without freezing and saves unchanged.
+Very long lines show in pieces, so a minified file opens without freezing and saves unchanged.
 
 ### Tray
 
-A panel icon shows or hides the window, and its right click menu runs the program's own actions.
+The panel icon shows or hides the window, and its menu runs the app's actions.
 
 ### Themes
 
-Crimson Monokai, Crimson Monokai Light, Blitz, Dracula, Nord, Gruvbox, Catppuccin and Cupcake colour the window, sidebar and title bar of each app.\
-They are GtkSourceView style schemes, so a theme saved in `~/.local/share/gtksourceview-5/styles` shows up in all Crimson apps and GtkSourceView editors.\
+Built in themes colour the window, sidebar and title bar of each app.\
+They are GtkSourceView style schemes, so a theme saved in `~/.local/share/gtksourceview-5/styles` shows up in every Crimson app.\
 The `crimson:window`, `crimson:titlebar`, `crimson:sidebar`, `crimson:statusbar` and `crimson:accent` styles colour those parts.
 
 ### Loading
 
-A spinner that fades in after 500 ms and a fade for content that arrives.
-
-### Packaging
-
-`scripts/package.sh` packs a built app into a tar.gz, and the reusable nightly workflow publishes a release when `main` changed.
+A spinner that fades in after half a second, and a fade-in for content when it loads.
 
 ## Building
 
