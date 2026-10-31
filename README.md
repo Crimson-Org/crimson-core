@@ -49,5 +49,5 @@ A spinner that fades in after 500 ms and a fade for content that arrives.
 ## Building
 
 Add the repository as a submodule in `subprojects/crimson-core`, compile `src/common/*.c` with `-Isubprojects/crimson-core/src` and link GTK4 and libadwaita.\
-Add `data/common.css` to the app's resources as `common.css`, and compile `data/crimson-core.gresource.xml` into the program for the themes.\
+Add `assets/common.css` to the app's resources as `common.css`, and compile `assets/crimson-core.gresource.xml` into the program for the themes.\
 Give header bars and toolbar views that form the title bar the `title-bar` class.

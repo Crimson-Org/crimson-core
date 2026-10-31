@@ -11,10 +11,10 @@ repository=${GITHUB_REPOSITORY:-Crimson-Org/$PROGRAM}
 staging=$(mktemp -d "${TMPDIR:-/tmp}/$PROGRAM-appimage.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 
-sed "s|@EXEC@|$PROGRAM|" "data/$APPLICATION_ID.desktop.in" > "$staging/$APPLICATION_ID.desktop"
+sed "s|@EXEC@|$PROGRAM|" "assets/$APPLICATION_ID.desktop.in" > "$staging/$APPLICATION_ID.desktop"
 export APPDIR="$staging/AppDir"
 export DESKTOP="$staging/$APPLICATION_ID.desktop"
-export ICON="$PWD/data/icons/scalable/apps/$APPLICATION_ID.svg"
+export ICON="$PWD/assets/icons/scalable/apps/$APPLICATION_ID.svg"
 export OUTPATH="$PWD/dist"
 export OUTNAME="$PROGRAM-$version-linux-$architecture.AppImage"
 export MAIN_BIN="$PROGRAM"
