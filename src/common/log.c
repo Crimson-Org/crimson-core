@@ -6,11 +6,10 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 
+#include "key-store.h"
 #include "log.h"
 
 #define MAXIMUM_LOG_BYTES (1024 * 1024)
-/* Logs may hold paths and names, so only this user reads them */
-#define PRIVATE_FILE_MODE 0600
 #define NANOSECONDS_PER_MICROSECOND 1000
 #define DECIMAL_BASE 10
 /* In /proc/self/stat the fields after the command name start two characters past its closing bracket */
@@ -79,7 +78,7 @@ static FILE *open_log_file(const char *slug) {
 		return NULL;
 	FILE *file = g_fopen(current_path, "w");
 	if (file)
-		g_chmod(current_path, PRIVATE_FILE_MODE);
+		make_file_private(current_path);
 	return file;
 }
 

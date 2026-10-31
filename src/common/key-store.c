@@ -4,6 +4,7 @@
 #include "key-store.h"
 
 #define PRIVATE_FOLDER_MODE 0700
+#define PRIVATE_FILE_MODE 0600
 
 
 char *get_config_file_path(const char *file_name) {
@@ -18,6 +19,11 @@ char *get_state_file_path(const char *file_name) {
 
 gboolean make_private_folder(const char *path) {
 	return g_mkdir_with_parents(path, PRIVATE_FOLDER_MODE) == 0;
+}
+
+
+void make_file_private(const char *path) {
+	g_chmod(path, PRIVATE_FILE_MODE);
 }
 
 
