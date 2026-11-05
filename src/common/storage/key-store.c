@@ -1,4 +1,5 @@
 #include <gio/gio.h>
+#include <string.h>
 #include <glib/gstdio.h>
 
 #include "common/app/identity.h"
@@ -69,7 +70,7 @@ GKeyFile *load_key_file(const char *path, GKeyFileFlags flags) {
 }
 
 
-gboolean save_text_file(const char *path, const char *text, gboolean is_private) {
+gboolean save_file_bytes(const char *path, const void *data, gsize length, gboolean is_private) {
 	g_autofree char *directory = g_path_get_dirname(path);
 	if (!make_private_folder(directory)) {
 		g_warning("%s was not saved, since its folder could not be made", path);
@@ -77,11 +78,16 @@ gboolean save_text_file(const char *path, const char *text, gboolean is_private)
 	}
 	g_autoptr(GError) error = NULL;
 	int mode = is_private ? PRIVATE_FILE_MODE : SHARED_FILE_MODE;
-	if (!g_file_set_contents_full(path, text, -1, G_FILE_SET_CONTENTS_CONSISTENT, mode, &error)) {
+	if (!g_file_set_contents_full(path, data, (gssize)length, G_FILE_SET_CONTENTS_CONSISTENT, mode, &error)) {
 		g_warning("%s was not saved: %s", path, error->message);
 		return FALSE;
 	}
 	return TRUE;
+}
+
+
+gboolean save_text_file(const char *path, const char *text, gboolean is_private) {
+	return save_file_bytes(path, text, strlen(text), is_private);
 }
 
 

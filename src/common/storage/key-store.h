@@ -28,8 +28,9 @@ GKeyFile *load_key_file(const char *path, GKeyFileFlags flags);
 gboolean save_key_file(GKeyFile *file, const char *path);
 /* For files only this user may read from their first byte, such as a saved sign in */
 gboolean save_private_key_file(GKeyFile *file, const char *path);
-/* Writes text whole or not at all, making the folder, readable by this user alone when private. Any thread may call
- * it, so a file can be written away from the window */
+/* Write bytes or text whole or not at all, making the folder, readable by this user alone when private, and say in
+ * the log when they could not. Any thread may call them, so a file can be written away from the window */
+gboolean save_file_bytes(const char *path, const void *data, gsize length, gboolean is_private);
 gboolean save_text_file(const char *path, const char *text, gboolean is_private);
 
 int read_key_integer(GKeyFile *file, const char *group, const char *key, int fallback, int minimum, int maximum);

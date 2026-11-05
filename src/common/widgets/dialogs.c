@@ -9,6 +9,10 @@ static gboolean notice_press(GtkEventControllerLegacy *controller, GdkEvent *eve
 	if (gdk_event_get_event_type(event) != GDK_BUTTON_PRESS || !content)
 		return FALSE;
 	GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(dialog)));
+	/* A press in a popup the dialog opened, such as a dropdown's list, sits on a surface of its own and counts as
+	 * inside */
+	if (gdk_event_get_surface(event) != gtk_native_get_surface(GTK_NATIVE(root)))
+		return FALSE;
 	double x = 0, y = 0, left = 0, top = 0;
 	gdk_event_get_position(event, &x, &y);
 	gtk_native_get_surface_transform(GTK_NATIVE(root), &left, &top);
