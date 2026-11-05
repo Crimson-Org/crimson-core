@@ -1,6 +1,6 @@
 #include <adwaita.h>
 
-#include "themes.h"
+#include "common/themes/themes.h"
 
 /* GtkSourceView keeps its own themes among its resources, which only exist in programs that load it */
 #define SOURCE_VIEW_THEMES_RESOURCE "/org/gnome/gtksourceview/styles"
@@ -217,7 +217,7 @@ char *get_user_theme_folder(void) {
 GPtrArray *list_themes(void) {
 	if (!themes)
 		read_themes();
-	return themes;
+	return g_ptr_array_ref(themes);
 }
 
 
@@ -410,7 +410,8 @@ void use_themes(const char *light_id, const char *dark_id, ThemeParts parts) {
 	light_theme = g_strdup(light_id ? light_id : DEFAULT_LIGHT_THEME);
 	dark_theme = g_strdup(dark_id ? dark_id : DEFAULT_DARK_THEME);
 	coloured_parts = parts;
-	list_themes();
+	if (!themes)
+		read_themes();
 	apply_themes(FALSE);
 }
 

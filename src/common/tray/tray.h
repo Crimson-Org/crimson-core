@@ -27,5 +27,8 @@ void set_tray_label(Tray *tray, guint index, const char *label);
 void set_tray_attention(Tray *tray, gboolean wants_attention);
 /* Whether a panel took the icon, since without one a hidden window could not be brought back */
 gboolean is_tray_shown(Tray *tray);
-/* Takes the icon off the panel at once, such as while the program quits */
+/* Hides the window into the tray, or minimizes it when no panel took the icon, since a hidden window could not be
+ * brought back then */
+void hide_window_to_tray(Tray *tray);
+/* Takes the icon off the panel at once, such as while the program quits, after which the panel reaches nothing */
 void remove_tray(Tray *tray);

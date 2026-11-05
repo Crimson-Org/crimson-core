@@ -21,9 +21,23 @@ on:
         description: Lines of NAME=value the application's build reads, such as service keys kept out of the source
         required: false
 
+# The builds run outside tools, so only the job that publishes may write to the repository
+permissions:
+  contents: read
+
+# One night's build at a time, so two never publish the same commit
+concurrency:
+  group: nightly-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # Nightly releases past this many are removed, so the list stays short
+  KEPT_RELEASES: 14
+
 jobs:
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
     outputs:
@@ -35,6 +49,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Look for changes since the last release
         id: changes
@@ -52,6 +67,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container: opensuse/tumbleweed
     steps:
       - name: Install build tools
@@ -62,8 +78,11 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.commit }}
           submodules: true
+          persist-credentials: false
 
-      - name: Load the build settings
+      # Hands each NAME=value line of BUILD_ENV to the later steps, masked in the log
+      - &load-build-settings
+        name: Load the build settings
         env:
           BUILD_ENV: ${{ secrets.BUILD_ENV }}
         run: |
@@ -86,6 +105,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.changed == 'true' && inputs.arch-packages != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container: ghcr.io/pkgforge-dev/archlinux:latest
     steps:
       - name: Install the AppImage tools
@@ -101,16 +121,9 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.commit }}
           submodules: true
+          persist-credentials: false
 
-      - name: Load the build settings
-        env:
-          BUILD_ENV: ${{ secrets.BUILD_ENV }}
-        run: |
-          printf '%s\n' "$BUILD_ENV" | while IFS='=' read -r name value; do
-            [ -n "$name" ] || continue
-            echo "::add-mask::$value"
-            echo "$name=$value" >> "$GITHUB_ENV"
-          done
+      - *load-build-settings
 
       - name: Build and pack the AppImage
         run: sh .crimson-build/appimage.sh
@@ -131,6 +144,9 @@ jobs:
       !cancelled() && github.ref_name == 'main' && needs.archive.result == 'success'
       && contains(fromJSON('["success", "skipped"]'), needs.appimage.result)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -139,6 +155,7 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Collect the builds
         uses: actions/download-artifact@v8
@@ -156,3 +173,9 @@ jobs:
             git log --reverse --format=%B "$last..$commit" | grep -v '^$' | head -20 | sed 's/^./* \u&/' > notes.txt
           fi
           gh release create "$tag" dist/* --target "$commit" --title "${{ inputs.title }} $(date -u +%Y-%m-%d)" --notes-file notes.txt
+
+      - name: Remove old releases
+        run: |
+          gh release list --limit 100 --json tagName --jq ".[$KEPT_RELEASES:][].tagName" | while read -r tag; do
+            gh release delete "$tag" --yes --cleanup-tag
+          done

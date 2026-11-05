@@ -1,6 +1,6 @@
 #include <string.h>
 
-#include "long-lines.h"
+#include "common/text/long-lines.h"
 
 /* A line is cut into pieces of at most this many characters, which GTK lays out in a few milliseconds */
 #define PIECE_CHARACTERS 10000
@@ -8,6 +8,13 @@
 #define BREAK_SEARCH_CHARACTERS 200
 #define SPLIT_TAG "split-line-break"
 #define SPLITTING_KEY "splitting-long-lines"
+#define WAS_SPLIT_KEY "long-lines-were-split"
+#define OWN_SEPARATORS_KEY "keeps-paragraph-separators"
+#define REPLAYING_KEY "replaying-history"
+static const char *const HISTORY_SIGNALS[] = {"undo", "redo"};
+/* A break is a paragraph separator, which ends a line in GTK as a newline does, but which files almost never hold, so
+ * a break that undo, redo or a drag puts back is still known as one. The tag only makes breaks quick to find */
+#define BREAK_TEXT " "
 
 
 static GtkTextTag *get_split_tag(GtkTextBuffer *buffer) {
@@ -17,6 +24,34 @@ static GtkTextTag *get_split_tag(GtkTextBuffer *buffer) {
 
 static gboolean is_break_after(gunichar character) {
 	return g_unichar_isspace(character) || g_unichar_ispunct(character);
+}
+
+
+/* Our own changes, and buffers whose file holds paragraph separators of its own, are left as they come */
+static gboolean is_left_alone(GtkTextBuffer *buffer) {
+	return g_object_get_data(G_OBJECT(buffer), SPLITTING_KEY) || g_object_get_data(G_OBJECT(buffer), OWN_SEPARATORS_KEY);
+}
+
+
+/* Undo and redo put back changes by the places they had, so they must never meet a break added meanwhile */
+static gboolean is_replaying(GtkTextBuffer *buffer) {
+	return g_object_get_data(G_OBJECT(buffer), REPLAYING_KEY) != NULL;
+}
+
+
+static void start_replaying(GtkTextBuffer *buffer) {
+	g_object_set_data(G_OBJECT(buffer), REPLAYING_KEY, GINT_TO_POINTER(TRUE));
+}
+
+
+static void stop_replaying(GtkTextBuffer *buffer) {
+	g_object_set_data(G_OBJECT(buffer), REPLAYING_KEY, NULL);
+}
+
+
+static void insert_break(GtkTextBuffer *buffer, GtkTextIter *iter) {
+	g_object_set_data(G_OBJECT(buffer), WAS_SPLIT_KEY, GINT_TO_POINTER(TRUE));
+	gtk_text_buffer_insert_with_tags_by_name(buffer, iter, BREAK_TEXT, -1, SPLIT_TAG, NULL);
 }
 
 
@@ -37,12 +72,22 @@ static void find_piece_end(GtkTextIter *iter) {
 static void split_line(GtkTextBuffer *buffer, int line) {
 	GtkTextIter iter;
 	gtk_text_buffer_get_iter_at_line(buffer, &iter, line);
+	g_object_set_data(G_OBJECT(buffer), SPLITTING_KEY, GINT_TO_POINTER(TRUE));
 	while (gtk_text_iter_get_chars_in_line(&iter) > PIECE_CHARACTERS + 1) {
 		find_piece_end(&iter);
 		int offset = gtk_text_iter_get_offset(&iter);
-		gtk_text_buffer_insert_with_tags_by_name(buffer, &iter, "\n", 1, SPLIT_TAG, NULL);
+		insert_break(buffer, &iter);
 		gtk_text_buffer_get_iter_at_offset(buffer, &iter, offset + 1);
 	}
+	g_object_set_data(G_OBJECT(buffer), SPLITTING_KEY, NULL);
+}
+
+
+/* Where the line holding the text ends, at a newline or a break */
+static const char *find_line_end(const char *text, const char *end) {
+	const char *newline = memchr(text, '\n', (size_t)(end - text));
+	const char *found_break = g_strstr_len(text, newline ? newline - text : end - text, BREAK_TEXT);
+	return found_break ? found_break : newline;
 }
 
 
@@ -51,19 +96,18 @@ static gboolean has_long_run(const char *text, int length, int line_length) {
 	const char *run = text, *end = text + length;
 	int before = line_length;
 	while (run < end) {
-		const char *newline = memchr(run, '\n', (size_t)(end - run));
-		const char *run_end = newline ? newline : end;
+		const char *line_end = find_line_end(run, end);
+		const char *run_end = line_end ? line_end : end;
 		if (before + (run_end - run) >= PIECE_CHARACTERS)
 			return TRUE;
 		before = 0;
-		run = run_end + 1;
+		run = line_end ? g_utf8_next_char(line_end) : end;
 	}
 	return FALSE;
 }
 
 
-/* Finds where the incoming text has to be cut so no line grows past a piece, counting from the line it joins,
- */
+/* Finds where the incoming text has to be cut so no line grows past a piece, counting from the line it joins */
 static GArray *find_cuts(const char *text, int length, int line_length) {
 	GArray *cuts = g_array_new(FALSE, FALSE, sizeof(int));
 	if (!has_long_run(text, length, line_length))
@@ -72,7 +116,7 @@ static GArray *find_cuts(const char *text, int length, int line_length) {
 	const char *break_after = NULL;
 	for (const char *character = text; character < text + length; character = g_utf8_next_char(character)) {
 		gunichar value = g_utf8_get_char(character);
-		if (value == '\n') {
+		if (value == '\n' || value == g_utf8_get_char(BREAK_TEXT)) {
 			run = 0;
 			break_after = NULL;
 			continue;
@@ -95,10 +139,45 @@ static GArray *find_cuts(const char *text, int length, int line_length) {
 }
 
 
+/* Text that comes back, such as through undo or redo, holds breaks without their tag, which goes back on them */
+static void tag_returning_breaks(GtkTextBuffer *buffer, GtkTextMark *after, const char *text, int length) {
+	GtkTextIter character;
+	gtk_text_buffer_get_iter_at_mark(buffer, &character, after);
+	gtk_text_iter_backward_chars(&character, (int)g_utf8_strlen(text, length));
+	const char *position = text, *end = text + length, *found;
+	while ((found = g_strstr_len(position, end - position, BREAK_TEXT))) {
+		gtk_text_iter_forward_chars(&character, (int)g_utf8_strlen(position, found - position));
+		int offset = gtk_text_iter_get_offset(&character);
+		GtkTextIter next = character;
+		gtk_text_iter_forward_char(&next);
+		gtk_text_buffer_apply_tag(buffer, get_split_tag(buffer), &character, &next);
+		/* Tagging moves no text, but iterators still have to be fetched again after it */
+		gtk_text_buffer_get_iter_at_offset(buffer, &character, offset + 1);
+		position = found + strlen(BREAK_TEXT);
+	}
+}
+
+
+/* Puts in a piece of text, whose breaks are tagged when it came back holding some */
+static void insert_piece(GtkTextBuffer *buffer, GtkTextIter *location, const char *text, int length) {
+	gtk_text_buffer_insert(buffer, location, text, length);
+	if (!g_strstr_len(text, length, BREAK_TEXT))
+		return;
+	GtkTextMark *after = gtk_text_buffer_create_mark(buffer, NULL, location, FALSE);
+	tag_returning_breaks(buffer, after, text, length);
+	gtk_text_buffer_get_iter_at_mark(buffer, location, after);
+	gtk_text_buffer_delete_mark(buffer, after);
+}
+
+
 /* Puts the new text in as pieces joined by marked breaks, so GTK never holds a huge line even for a moment, since
  * every later change to one would count its characters again */
 static void cut_incoming_text(GtkTextBuffer *buffer, GtkTextIter *location, char *text, int length, gpointer data) {
-	if (g_object_get_data(G_OBJECT(buffer), SPLITTING_KEY))
+	/* Paragraph separators in a buffer that was never split are the file's own, and they stay, so such a file is
+	 * never split, since its separators could not be told from breaks */
+	if (!g_object_get_data(G_OBJECT(buffer), WAS_SPLIT_KEY) && g_strstr_len(text, length, BREAK_TEXT))
+		g_object_set_data(G_OBJECT(buffer), OWN_SEPARATORS_KEY, GINT_TO_POINTER(TRUE));
+	if (is_left_alone(buffer) || is_replaying(buffer))
 		return;
 	g_autoptr(GArray) cuts = find_cuts(text, length, gtk_text_iter_get_line_offset(location));
 	if (!cuts->len)
@@ -108,28 +187,46 @@ static void cut_incoming_text(GtkTextBuffer *buffer, GtkTextIter *location, char
 	int start = 0;
 	for (guint index = 0; index <= cuts->len; index++) {
 		int end = index < cuts->len ? g_array_index(cuts, int, index) : length;
-		gtk_text_buffer_insert(buffer, location, text + start, end - start);
+		insert_piece(buffer, location, text + start, end - start);
 		if (index < cuts->len)
-			gtk_text_buffer_insert_with_tags_by_name(buffer, location, "\n", 1, SPLIT_TAG, NULL);
+			insert_break(buffer, location);
 		start = end;
 	}
 	g_object_set_data(G_OBJECT(buffer), SPLITTING_KEY, NULL);
 }
 
 
-/* Cuts the line the insert ended on when the text after the insert pushed it past a piece, which is short work,
- * since every line already is */
+/* Tags breaks that came back, then cuts the line the insert ended on when the text after the insert pushed it past
+ * a piece, which is short work, since every line already is */
 static void notice_insert(GtkTextBuffer *buffer, GtkTextIter *end, char *text, int length, gpointer data) {
-	if (g_object_get_data(G_OBJECT(buffer), SPLITTING_KEY)
-		|| gtk_text_iter_get_chars_in_line(end) <= PIECE_CHARACTERS + 1)
+	if (is_left_alone(buffer))
+		return;
+	gboolean has_breaks = g_strstr_len(text, length, BREAK_TEXT) != NULL;
+	if (!has_breaks && gtk_text_iter_get_chars_in_line(end) <= PIECE_CHARACTERS + 1)
 		return;
 	/* The default handler and later ones expect the iterator after the new text, which the breaks move along */
 	GtkTextMark *after = gtk_text_buffer_create_mark(buffer, NULL, end, FALSE);
-	g_object_set_data(G_OBJECT(buffer), SPLITTING_KEY, GINT_TO_POINTER(TRUE));
-	split_line(buffer, gtk_text_iter_get_line(end));
-	g_object_set_data(G_OBJECT(buffer), SPLITTING_KEY, NULL);
+	if (has_breaks)
+		tag_returning_breaks(buffer, after, text, length);
 	gtk_text_buffer_get_iter_at_mark(buffer, end, after);
+	if (!is_replaying(buffer) && gtk_text_iter_get_chars_in_line(end) > PIECE_CHARACTERS + 1) {
+		split_line(buffer, gtk_text_iter_get_line(end));
+		gtk_text_buffer_get_iter_at_mark(buffer, end, after);
+	}
 	gtk_text_buffer_delete_mark(buffer, after);
+}
+
+
+/* Deleting a break joins two pieces, which may make the line too long again */
+static void notice_delete(GtkTextBuffer *buffer, GtkTextIter *start, GtkTextIter *end, gpointer data) {
+	if (is_left_alone(buffer) || is_replaying(buffer) || gtk_text_iter_get_chars_in_line(start) <= PIECE_CHARACTERS + 1)
+		return;
+	/* Later handlers expect both iterators at the place of the deleted text */
+	GtkTextMark *place = gtk_text_buffer_create_mark(buffer, NULL, start, TRUE);
+	split_line(buffer, gtk_text_iter_get_line(start));
+	gtk_text_buffer_get_iter_at_mark(buffer, start, place);
+	*end = *start;
+	gtk_text_buffer_delete_mark(buffer, place);
 }
 
 
@@ -138,6 +235,11 @@ void split_long_lines(GtkTextBuffer *buffer) {
 		gtk_text_buffer_create_tag(buffer, SPLIT_TAG, NULL);
 	g_signal_connect(buffer, "insert-text", G_CALLBACK(cut_incoming_text), NULL);
 	g_signal_connect_after(buffer, "insert-text", G_CALLBACK(notice_insert), NULL);
+	g_signal_connect_after(buffer, "delete-range", G_CALLBACK(notice_delete), NULL);
+	for (guint index = 0; index < G_N_ELEMENTS(HISTORY_SIGNALS); index++) {
+		g_signal_connect(buffer, HISTORY_SIGNALS[index], G_CALLBACK(start_replaying), NULL);
+		g_signal_connect_after(buffer, HISTORY_SIGNALS[index], G_CALLBACK(stop_replaying), NULL);
+	}
 }
 
 

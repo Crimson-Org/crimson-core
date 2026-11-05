@@ -1,5 +1,5 @@
-#include "key-store.h"
-#include "window-geometry.h"
+#include "common/storage/key-store.h"
+#include "common/window/window-geometry.h"
 
 #define GEOMETRY_GROUP "window"
 #define MINIMUM_WINDOW_SIZE 320

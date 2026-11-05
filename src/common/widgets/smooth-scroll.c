@@ -2,7 +2,7 @@
 
 #include <adwaita.h>
 
-#include "smooth-scroll.h"
+#include "common/widgets/smooth-scroll.h"
 
 #define WHEEL_DURATION 240
 /* GTK scrolls this power of the page size for one wheel step */
@@ -23,6 +23,7 @@ static void free_glide(gpointer data) {
 	if (glide->animation)
 		adw_animation_pause(glide->animation);
 	g_clear_object(&glide->animation);
+	g_clear_object(&glide->adjustment);
 	g_free(glide);
 }
 
@@ -38,8 +39,9 @@ static Glide *get_glide(GtkScrolledWindow *scroller, gboolean is_horizontal) {
 	if (glide)
 		return glide;
 	glide = g_new0(Glide, 1);
-	glide->adjustment = is_horizontal ? gtk_scrolled_window_get_hadjustment(scroller)
-		: gtk_scrolled_window_get_vadjustment(scroller);
+	/* The glide keeps the adjustment it started with, even when the scroller is given another one */
+	glide->adjustment = g_object_ref(is_horizontal ? gtk_scrolled_window_get_hadjustment(scroller)
+		: gtk_scrolled_window_get_vadjustment(scroller));
 	AdwAnimationTarget *target = adw_callback_animation_target_new(set_scroll_value, glide->adjustment, NULL);
 	glide->animation = adw_timed_animation_new(GTK_WIDGET(scroller), 0, 0, WHEEL_DURATION, target);
 	adw_timed_animation_set_easing(ADW_TIMED_ANIMATION(glide->animation), ADW_EASE_OUT_CUBIC);

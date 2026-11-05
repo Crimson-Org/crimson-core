@@ -6,31 +6,19 @@
 
 set -eu
 version=${VERSION:?VERSION is not set}
+. "$(dirname "$0")/desktop-files.sh"
 name=$PROGRAM-$version-linux-$(uname -m)
 staging=$(mktemp -d "${TMPDIR:-/tmp}/$PROGRAM-archive.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 folder=$staging/$name
-mkdir -p "$folder/share/applications" "$folder/share/icons/hicolor/scalable/apps" "$folder/share/metainfo"
+mkdir -p "$folder"
 install -m 755 "build/$PROGRAM" "$folder/"
 for extra in ${EXTRA_PROGRAMS:-}; do
 	install -m 755 "$extra" "$folder/"
 done
-install -m 644 LICENSE README.md "$folder/"
-for pair in ${EXTRA_LICENSES:-}; do
-	mkdir -p "$folder/licenses/${pair%%=*}"
-	install -m 644 "${pair#*=}" "$folder/licenses/${pair%%=*}/"
-done
-for desktop in assets/"$APPLICATION_ID"*.desktop.in; do
-	sed "s|@EXEC@|$PROGRAM|" "$desktop" > "$folder/share/applications/$(basename "$desktop" .in)"
-done
-install -m 644 "assets/icons/scalable/apps/$APPLICATION_ID.svg" "$folder/share/icons/hicolor/scalable/apps/"
-# Panels find a tray icon's symbolic form only in an installed icon theme, so an application that has one ships it
-symbolic=assets/icons/symbolic/apps/$APPLICATION_ID-symbolic.svg
-if [ -f "$symbolic" ]; then
-	mkdir -p "$folder/share/icons/hicolor/symbolic/apps"
-	install -m 644 "$symbolic" "$folder/share/icons/hicolor/symbolic/apps/"
-fi
-install -m 644 "assets/$APPLICATION_ID.metainfo.xml" "$folder/share/metainfo/"
+install -m 644 README.md "$folder/"
+install_licenses "$folder"
+install_desktop_files "$folder" "$PROGRAM"
 mkdir -p dist
 tar -C "$staging" -czf "dist/$name.tar.gz" "$name"
 printf '%s\n' "Wrote dist/$name.tar.gz"

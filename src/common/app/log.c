@@ -3,11 +3,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <fcntl.h>
+
 #include <glib.h>
 #include <glib/gstdio.h>
 
-#include "key-store.h"
-#include "log.h"
+#include "common/storage/key-store.h"
+#include "common/app/log.h"
 
 #define MAXIMUM_LOG_BYTES (1024 * 1024)
 #define NANOSECONDS_PER_MICROSECOND 1000
@@ -16,29 +18,66 @@
 /* The start time is the twentieth of those fields, in clock ticks */
 #define STAT_FIELDS_OFFSET 2
 #define STAT_START_TIME_FIELD 19
+#define LOG_FULL_LINE "The log is full, so later messages only go to the system journal\n"
 
 static FILE *session_log;
-static GLogFunc previous_handler;
+/* Worker threads log too, so writing and closing the file take turns */
+static GMutex log_lock;
 static gsize written_bytes;
+static gboolean is_log_full;
 static gint64 start_time;
 
 
-/* Debug lines come only from the program itself, since GLib's network debugging alone would fill the log */
-static void write_message(const char *domain, GLogLevelFlags level, const char *message, gpointer data) {
-	g_log_default_handler(domain, level, message, NULL);
-	if (!session_log || written_bytes >= MAXIMUM_LOG_BYTES)
-		return;
-	if (domain && (level & (G_LOG_LEVEL_DEBUG | G_LOG_LEVEL_INFO)))
-		return;
-	g_autoptr(GDateTime) now = g_date_time_new_now_local();
-	g_autofree char *timestamp = g_date_time_format(now, "%FT%T%z");
-	g_autofree char *line = g_strdup_printf("%s %s\n", timestamp, message);
-	if (strlen(line) > MAXIMUM_LOG_BYTES - written_bytes)
-		return;
-	int bytes = fprintf(session_log, "%s", line);
-	if (bytes > 0)
-		written_bytes += bytes;
+static const char *get_level_name(GLogLevelFlags level) {
+	if (level & G_LOG_LEVEL_ERROR)
+		return "error";
+	if (level & G_LOG_LEVEL_CRITICAL)
+		return "critical";
+	if (level & G_LOG_LEVEL_WARNING)
+		return "warning";
+	if (level & G_LOG_LEVEL_MESSAGE)
+		return "message";
+	if (level & G_LOG_LEVEL_INFO)
+		return "info";
+	return "debug";
+}
+
+
+static void write_line(const char *line) {
+	if (strlen(line) <= MAXIMUM_LOG_BYTES - written_bytes) {
+		int bytes = fprintf(session_log, "%s", line);
+		if (bytes > 0)
+			written_bytes += bytes;
+	} else if (!is_log_full) {
+		fprintf(session_log, LOG_FULL_LINE);
+		is_log_full = TRUE;
+	}
 	fflush(session_log);
+}
+
+
+/* Every message passes here, GTK's structured ones too, and still reaches the terminal and the journal as before.
+ * Debug lines come only from the program itself, since GLib's network debugging alone would fill the log */
+static GLogWriterOutput write_message(GLogLevelFlags level, const GLogField *fields, gsize count, gpointer data) {
+	const char *domain = NULL, *message = NULL;
+	for (gsize index = 0; index < count; index++) {
+		if (g_strcmp0(fields[index].key, "GLIB_DOMAIN") == 0)
+			domain = fields[index].value;
+		else if (g_strcmp0(fields[index].key, "MESSAGE") == 0)
+			message = fields[index].value;
+	}
+	gboolean is_foreign_debug = domain && (level & (G_LOG_LEVEL_DEBUG | G_LOG_LEVEL_INFO));
+	if (message && !is_foreign_debug) {
+		g_autoptr(GDateTime) now = g_date_time_new_now_local();
+		g_autofree char *timestamp = g_date_time_format(now, "%FT%T%z");
+		g_autofree char *line = g_strdup_printf("%s %s%s%s%s %s\n", timestamp, get_level_name(level),
+			domain ? " " : "", domain ? domain : "", ":", message);
+		g_mutex_lock(&log_lock);
+		if (session_log)
+			write_line(line);
+		g_mutex_unlock(&log_lock);
+	}
+	return g_log_writer_default(level, fields, count, data);
 }
 
 
@@ -76,10 +115,12 @@ static FILE *open_log_file(const char *slug) {
 	g_autofree char *previous_path = g_build_filename(log_directory, previous_name, NULL);
 	if (g_file_test(current_path, G_FILE_TEST_EXISTS) && g_rename(current_path, previous_path) != 0)
 		return NULL;
-	FILE *file = g_fopen(current_path, "w");
-	if (file)
-		make_file_private(current_path);
-	return file;
+	/* The log is private from its first byte, and stays out of programs the app starts, such as a terminal's shell */
+	int descriptor = g_open(current_path, O_WRONLY | O_CREAT | O_TRUNC, PRIVATE_FILE_MODE);
+	if (descriptor < 0)
+		return NULL;
+	fcntl(descriptor, F_SETFD, FD_CLOEXEC);
+	return fdopen(descriptor, "w");
 }
 
 
@@ -87,20 +128,22 @@ void start_session_log(const char *slug) {
 	/* The monotonic clock and boot time differ by any suspend, so the start is moved across by the gap */
 	start_time = g_get_monotonic_time() - (get_boot_microseconds() - get_process_start());
 	session_log = open_log_file(slug);
-	if (!session_log)
-		return;
-	/* The default handler receives every log domain, so GTK and libadwaita warnings reach the log too */
-	previous_handler = g_log_set_default_handler(write_message, NULL);
+	if (session_log)
+		g_log_set_writer_func(write_message, NULL, NULL);
+}
+
+
+gboolean has_session_log(void) {
+	return session_log != NULL;
 }
 
 
 void stop_session_log(void) {
-	if (previous_handler)
-		g_log_set_default_handler(previous_handler, NULL);
+	g_mutex_lock(&log_lock);
 	if (session_log)
 		fclose(session_log);
 	session_log = NULL;
-	previous_handler = NULL;
+	g_mutex_unlock(&log_lock);
 }
 
 

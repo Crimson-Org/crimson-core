@@ -10,7 +10,7 @@ A fix here applies to all apps at once.
 
 ### Startup
 
-One launch path for the session log, the `--version` flag, the shared stylesheet and the app icon.
+One launch path for the session log, the `--version` flag, the shared stylesheet, the app icon, and the About, Settings and Quit actions with their shortcuts.
 
 ### Settings and state
 
@@ -34,18 +34,27 @@ The panel icon shows or hides the window, and the icon's menu runs the app's act
 
 ### Themes
 
-Built in themes colour the window, sidebar and title bar of each app.\
-They are GtkSourceView style schemes, so a theme saved in `~/.local/share/gtksourceview-5/styles` shows up in every Crimson app.\
+Built in themes colour the window, sidebar and title bar of the apps that use them.\
+They are GtkSourceView style schemes, so a theme saved in `~/.local/share/gtksourceview-5/styles` shows up in each of them.\
 The `crimson:window`, `crimson:titlebar`, `crimson:sidebar`, `crimson:statusbar` and `crimson:accent` styles colour those parts.
 
 ### Loading
 
-A spinner that fades in after half a second, and content that fades in once loaded.
+A spinner that fades in after half a second each time it is shown, and content that fades in once loaded.
+
+### Code views
+
+Line numbers that count the file's own lines, for apps built on GtkSourceView.
+
+### Installing
+
+Shared scripts that install, remove and pack an app with its desktop files, icons and notices.
 
 ## Building
 
 Steps:
  1. Add the repository as a submodule in `subprojects/crimson-core`
- 2. Compile `src/common/*.c` with `-Isubprojects/crimson-core/src` and link GTK4 and libadwaita
- 3. Add `assets/common.css` to the app's resources as `common.css`, and compile `assets/crimson-core.gresource.xml` into the program
- 4. Give header bars and toolbar views that form the title bar the `title-bar` class
+ 2. Compile `src/common/*/*.c` with `-Isubprojects/crimson-core/src` and link GTK4 and libadwaita
+ 3. For an app built on GtkSourceView, also compile `src/source/*.c`
+ 4. Compile `assets/crimson-core.gresource.xml` into the program
+ 5. Give header bars and toolbar views that form the title bar the `title-bar` class

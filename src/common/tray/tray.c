@@ -1,9 +1,9 @@
 #include <math.h>
 #include <unistd.h>
 
-#include "identity.h"
-#include "key-store.h"
-#include "tray.h"
+#include "common/app/identity.h"
+#include "common/storage/key-store.h"
+#include "common/tray/tray.h"
 
 #define WHEEL_NOTCH 120
 #define WATCHER_NAME "org.kde.StatusNotifierWatcher"
@@ -19,8 +19,10 @@
 #define DOT_BLUE 60
 /* How strong the dot's glow starts, fading out over DOT_GLOW pixels */
 #define DOT_GLOW_STRENGTH 0.55
-/* Tray icons are ARGB, four bytes a pixel */
+/* Tray icons are ARGB, four bytes a pixel, while the image holds RGBA */
 #define BYTES_PER_PIXEL 4
+enum {TRAY_ALPHA, TRAY_RED, TRAY_GREEN, TRAY_BLUE};
+enum {IMAGE_RED, IMAGE_GREEN, IMAGE_BLUE, IMAGE_ALPHA};
 #define SYMBOLIC_FOLDER "icons/hicolor/symbolic/apps"
 #define SYMBOLIC_SUFFIX "-symbolic"
 #define DBUSMENU_VERSION 3
@@ -70,8 +72,10 @@ static const char MENU_INTERFACE[] =
 	"</interface></node>";
 
 struct Tray {
+	/* Clears itself when the window goes, so a late call from the panel finds nothing to act on */
 	GtkWindow *window;
 	GDBusConnection *bus;
+	guint item_registration, menu_registration;
 	GVariant *pixmap, *attention_pixmap;
 	char *theme_path;
 	/* Whether something waits for the user, which marks the icon with a glowing red dot */
@@ -90,7 +94,7 @@ struct Tray {
 
 
 static void run_window_action(Tray *tray, const char *name) {
-	if (name)
+	if (name && tray->window)
 		gtk_widget_activate_action(GTK_WIDGET(tray->window), name, NULL);
 }
 
@@ -156,6 +160,8 @@ static GVariant *read_menu_property(GDBusConnection *bus, const char *sender, co
 
 /* A click on the icon brings the window forward, or hides it when it already is */
 static void toggle_window(Tray *tray) {
+	if (!tray->window)
+		return;
 	if (gtk_widget_get_visible(GTK_WIDGET(tray->window)) && gtk_window_is_active(tray->window))
 		gtk_widget_set_visible(GTK_WIDGET(tray->window), FALSE);
 	else {
@@ -172,7 +178,7 @@ static void scroll_icon(Tray *tray, GVariant *parameters) {
 	int delta = 0;
 	const char *orientation = NULL;
 	g_variant_get(parameters, "(i&s)", &delta, &orientation);
-	if (!delta || !tray->scroll_action || g_ascii_strcasecmp(orientation, "vertical") != 0)
+	if (!delta || !tray->scroll_action || !tray->window || g_ascii_strcasecmp(orientation, "vertical") != 0)
 		return;
 	int steps = delta / WHEEL_NOTCH;
 	if (!steps)
@@ -258,12 +264,12 @@ static void draw_attention_dot(guchar *pixels, int width, int height) {
 			if (cover <= 0)
 				continue;
 			guchar *pixel = pixels + ((gsize)row * width + column) * BYTES_PER_PIXEL;
-			double below = pixel[0] / (double)G_MAXUINT8 * (1 - cover);
+			double below = pixel[TRAY_ALPHA] / (double)G_MAXUINT8 * (1 - cover);
 			double alpha = cover + below;
-			pixel[1] = (guchar)lround((DOT_RED * cover + pixel[1] * below) / alpha);
-			pixel[2] = (guchar)lround((DOT_GREEN * cover + pixel[2] * below) / alpha);
-			pixel[3] = (guchar)lround((DOT_BLUE * cover + pixel[3] * below) / alpha);
-			pixel[0] = (guchar)lround(alpha * G_MAXUINT8);
+			pixel[TRAY_RED] = (guchar)lround((DOT_RED * cover + pixel[TRAY_RED] * below) / alpha);
+			pixel[TRAY_GREEN] = (guchar)lround((DOT_GREEN * cover + pixel[TRAY_GREEN] * below) / alpha);
+			pixel[TRAY_BLUE] = (guchar)lround((DOT_BLUE * cover + pixel[TRAY_BLUE] * below) / alpha);
+			pixel[TRAY_ALPHA] = (guchar)lround(alpha * G_MAXUINT8);
 		}
 	}
 }
@@ -287,12 +293,12 @@ static GVariant *create_pixmap(gboolean has_dot) {
 		/* The tray protocol wants alpha first, while the image holds it last */
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
-				const guchar *from = source + row * stride + column * 4;
+				const guchar *from = source + row * stride + column * BYTES_PER_PIXEL;
 				guchar *to = pixels + ((gsize)row * width + column) * BYTES_PER_PIXEL;
-				to[0] = from[3];
-				to[1] = from[0];
-				to[2] = from[1];
-				to[3] = from[2];
+				to[TRAY_ALPHA] = from[IMAGE_ALPHA];
+				to[TRAY_RED] = from[IMAGE_RED];
+				to[TRAY_GREEN] = from[IMAGE_GREEN];
+				to[TRAY_BLUE] = from[IMAGE_BLUE];
 			}
 		}
 		if (has_dot)
@@ -319,9 +325,12 @@ static void register_item(GDBusConnection *bus, const char *name, const char *ow
 }
 
 
+/* Without a panel a window hidden in the tray could never come back, so it shows again */
 static void forget_watcher(GDBusConnection *bus, const char *name, gpointer data) {
 	Tray *tray = data;
 	tray->is_shown = FALSE;
+	if (tray->window && !gtk_widget_get_visible(GTK_WIDGET(tray->window)))
+		gtk_window_present(tray->window);
 }
 
 
@@ -334,15 +343,16 @@ static void watch_for_panel(GDBusConnection *bus, const char *name, gpointer dat
 }
 
 
-static void export_object(Tray *tray, const char *path, const char *xml, const GDBusInterfaceVTable *table) {
+static guint export_object(Tray *tray, const char *path, const char *xml, const GDBusInterfaceVTable *table) {
 	g_autoptr(GDBusNodeInfo) node = g_dbus_node_info_new_for_xml(xml, NULL);
-	g_dbus_connection_register_object(tray->bus, path, node->interfaces[0], table, tray, NULL, NULL);
+	return g_dbus_connection_register_object(tray->bus, path, node->interfaces[0], table, tray, NULL, NULL);
 }
 
 
 Tray *create_tray(GApplication *application, GtkWindow *window, const TraySetup *setup) {
 	Tray *tray = g_new0(Tray, 1);
 	tray->window = window;
+	g_object_add_weak_pointer(G_OBJECT(window), (gpointer *)&tray->window);
 	tray->labels = g_ptr_array_new_with_free_func(g_free);
 	tray->actions = g_ptr_array_new_with_free_func(g_free);
 	for (guint index = 0; index < setup->entry_count; index++) {
@@ -359,8 +369,8 @@ Tray *create_tray(GApplication *application, GtkWindow *window, const TraySetup 
 		return tray;
 	static const GDBusInterfaceVTable ITEM_TABLE = {answer_item_call, read_item_property, NULL, {0}};
 	static const GDBusInterfaceVTable MENU_TABLE = {answer_menu_call, read_menu_property, NULL, {0}};
-	export_object(tray, ITEM_PATH, ITEM_INTERFACE, &ITEM_TABLE);
-	export_object(tray, MENU_PATH, MENU_INTERFACE, &MENU_TABLE);
+	tray->item_registration = export_object(tray, ITEM_PATH, ITEM_INTERFACE, &ITEM_TABLE);
+	tray->menu_registration = export_object(tray, MENU_PATH, MENU_INTERFACE, &MENU_TABLE);
 	/* The tray protocol names each icon's bus name after the process and a count */
 	tray->name = g_strdup_printf("org.kde.StatusNotifierItem-%d-1", (int)getpid());
 	tray->name_id = g_bus_own_name_on_connection(tray->bus, tray->name, G_BUS_NAME_OWNER_FLAGS_NONE,
@@ -397,8 +407,27 @@ gboolean is_tray_shown(Tray *tray) {
 }
 
 
+void hide_window_to_tray(Tray *tray) {
+	if (!tray->window)
+		return;
+	if (tray->is_shown)
+		gtk_widget_set_visible(GTK_WIDGET(tray->window), FALSE);
+	else
+		gtk_window_minimize(tray->window);
+}
+
+
+static void unregister_object(Tray *tray, guint *registration) {
+	if (*registration)
+		g_dbus_connection_unregister_object(tray->bus, *registration);
+	*registration = 0;
+}
+
+
 void remove_tray(Tray *tray) {
 	g_clear_handle_id(&tray->watcher_id, g_bus_unwatch_name);
 	g_clear_handle_id(&tray->name_id, g_bus_unown_name);
+	unregister_object(tray, &tray->item_registration);
+	unregister_object(tray, &tray->menu_registration);
 	tray->is_shown = FALSE;
 }

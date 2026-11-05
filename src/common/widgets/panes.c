@@ -1,6 +1,6 @@
 #include <math.h>
 
-#include "panes.h"
+#include "common/widgets/panes.h"
 
 /* The same spring a libadwaita page view slides with */
 #define SLIDE_DAMPING 1.0

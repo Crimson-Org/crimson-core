@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 
-#include "frame-rate.h"
+#include "common/app/frame-rate.h"
+#include "common/app/log.h"
 
 /* Each summary covers at least this much time spent drawing */
 #define SUMMARY_MICROSECONDS (10 * G_USEC_PER_SEC)
@@ -15,7 +16,8 @@
 
 /* The window checks in this often, and a check this late means it could not answer or draw in the meantime */
 #define HEARTBEAT_MILLISECONDS 100
-#define HELD_MICROSECONDS (250 * 1000)
+#define HELD_MICROSECONDS (250 * G_TIME_SPAN_MILLISECOND)
+#define RECORD_KEY "frame-record"
 
 /* What one window has drawn since its last summary */
 typedef struct {
@@ -126,8 +128,11 @@ static gboolean note_input(GtkEventControllerLegacy *controller, GdkEvent *event
 void watch_frame_rate(GtkWidget *window) {
 	GdkFrameClock *clock = gtk_widget_get_frame_clock(window);
 	g_return_if_fail(clock);
+	/* The summaries only go to the session log, and a window is watched once however often it is shown */
+	if (!has_session_log() || g_object_get_data(G_OBJECT(clock), RECORD_KEY))
+		return;
 	FrameRecord *record = g_new0(FrameRecord, 1);
-	g_object_set_data_full(G_OBJECT(clock), "frame-record", record, g_free);
+	g_object_set_data_full(G_OBJECT(clock), RECORD_KEY, record, g_free);
 	g_signal_connect(clock, "before-paint", G_CALLBACK(start_frame), record);
 	g_signal_connect(clock, "after-paint", G_CALLBACK(finish_frame), record);
 	GtkEventController *input = gtk_event_controller_legacy_new();

@@ -2,8 +2,10 @@
 
 #include <gtk/gtk.h>
 
+#include "common/app/identity.h"
+
 /* Where the themes all Crimson apps bundle sit among their resources */
-#define BUNDLED_THEMES_RESOURCE "/io/github/CrimsonOrg/CrimsonCore/themes"
+#define BUNDLED_THEMES_RESOURCE CORE_RESOURCES "/themes"
 
 /* The themes used until one is chosen, or when the chosen one is gone */
 #define DEFAULT_LIGHT_THEME "crimson-monokai-light"
@@ -27,8 +29,10 @@ typedef void (*ThemeChangedFunction)(gboolean has_read_files, gpointer data);
 
 /* People's own themes live where GtkSourceView editors look, so they work in other editors too */
 char *get_user_theme_folder(void);
-/* The user's themes, the bundled ones and GtkSourceView's own when the program loads it, sorted by name */
+/* The user's themes, the bundled ones and GtkSourceView's own when the program loads it, sorted by name, for the
+ * caller to unref, so a reload never frees a list someone still shows */
 GPtrArray *list_themes(void);
+/* The theme stays valid until the themes are read again */
 const Theme *find_theme(const char *id);
 /* Reads the theme folders again, such as after a new theme file was written */
 void reload_themes(void);
