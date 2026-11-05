@@ -16,6 +16,11 @@ char *get_data_file_path(const char *file_name);
 gboolean make_private_folder(const char *path);
 /* Lets only this user read and write the file, such as a log or a saved sign in */
 void make_file_private(const char *path);
+/* Removes the files in a cache folder that were not changed or used for this many days, since a cache would
+ * otherwise only grow, and a reader that touches what it uses keeps it */
+void remove_old_files(const char *folder, guint days);
+/* Marks a cached file as used now, so remove_old_files keeps it */
+void mark_file_used(const char *path);
 
 /* Returns an empty file when the path is missing or unreadable, so callers keep their defaults */
 GKeyFile *load_key_file(const char *path, GKeyFileFlags flags);
@@ -23,6 +28,9 @@ GKeyFile *load_key_file(const char *path, GKeyFileFlags flags);
 gboolean save_key_file(GKeyFile *file, const char *path);
 /* For files only this user may read from their first byte, such as a saved sign in */
 gboolean save_private_key_file(GKeyFile *file, const char *path);
+/* Writes text whole or not at all, making the folder, readable by this user alone when private. Any thread may call
+ * it, so a file can be written away from the window */
+gboolean save_text_file(const char *path, const char *text, gboolean is_private);
 
 int read_key_integer(GKeyFile *file, const char *group, const char *key, int fallback, int minimum, int maximum);
 gboolean read_key_boolean(GKeyFile *file, const char *group, const char *key, gboolean fallback);

@@ -3,34 +3,57 @@
 #include "common/widgets/loading.h"
 
 #define SPINNER_SIZE 32
-#define DELAY_SOURCE_KEY "loading-delay-source"
+#define DELAY_KEY "loading-delay"
 
 
-static gboolean show_spinner(gpointer data) {
-	GtkWidget *spinner = data;
-	g_object_steal_data(G_OBJECT(spinner), DELAY_SOURCE_KEY);
-	fade_in_widget(spinner);
+/* One widget waiting to fade in, with what runs once it does */
+typedef struct {
+	GtkWidget *widget;
+	guint source;
+	GCallback shown;
+	gpointer data;
+} DelayedReveal;
+
+
+static gboolean reveal_widget(gpointer data) {
+	DelayedReveal *reveal = data;
+	reveal->source = 0;
+	fade_in_widget(reveal->widget);
+	if (reveal->shown)
+		((void (*)(gpointer))reveal->shown)(reveal->data);
 	return G_SOURCE_REMOVE;
 }
 
 
-static void cancel_delay(gpointer source) {
-	g_source_remove(GPOINTER_TO_UINT(source));
+/* The wait starts each time the widget is shown, so a widget made early and shown later waits too */
+static void start_delay(GtkWidget *widget, DelayedReveal *reveal) {
+	gtk_widget_set_opacity(widget, 0);
+	g_clear_handle_id(&reveal->source, g_source_remove);
+	reveal->source = g_timeout_add(SPINNER_DELAY_MILLISECONDS, reveal_widget, reveal);
 }
 
 
-/* The wait starts each time the spinner is shown, so a spinner made early and shown later waits too */
-static void start_delay(GtkWidget *spinner) {
-	gtk_widget_set_opacity(spinner, 0);
-	guint source = g_timeout_add(SPINNER_DELAY_MILLISECONDS, show_spinner, spinner);
-	/* The timer goes away with the spinner, so a page closed while loading leaves nothing behind */
-	g_object_set_data_full(G_OBJECT(spinner), DELAY_SOURCE_KEY, GUINT_TO_POINTER(source), cancel_delay);
+static void stop_delay(GtkWidget *widget, DelayedReveal *reveal) {
+	g_clear_handle_id(&reveal->source, g_source_remove);
+	gtk_widget_set_opacity(widget, 0);
 }
 
 
-static void stop_delay(GtkWidget *spinner) {
-	g_object_set_data(G_OBJECT(spinner), DELAY_SOURCE_KEY, NULL);
-	gtk_widget_set_opacity(spinner, 0);
+/* The timer goes away with the widget, so a page closed while loading leaves nothing behind */
+static void free_reveal(gpointer data) {
+	DelayedReveal *reveal = data;
+	g_clear_handle_id(&reveal->source, g_source_remove);
+	g_free(reveal);
+}
+
+
+void reveal_after_delay(GtkWidget *widget, GCallback shown, gpointer data) {
+	DelayedReveal *reveal = g_new0(DelayedReveal, 1);
+	*reveal = (DelayedReveal){widget, 0, shown, data};
+	gtk_widget_set_opacity(widget, 0);
+	g_signal_connect(widget, "map", G_CALLBACK(start_delay), reveal);
+	g_signal_connect(widget, "unmap", G_CALLBACK(stop_delay), reveal);
+	g_object_set_data_full(G_OBJECT(widget), DELAY_KEY, reveal, free_reveal);
 }
 
 
@@ -40,9 +63,7 @@ GtkWidget *create_loading_spinner(void) {
 	gtk_widget_set_size_request(spinner, SPINNER_SIZE, SPINNER_SIZE);
 	gtk_widget_set_halign(spinner, GTK_ALIGN_CENTER);
 	gtk_widget_set_valign(spinner, GTK_ALIGN_CENTER);
-	gtk_widget_set_opacity(spinner, 0);
-	g_signal_connect(spinner, "map", G_CALLBACK(start_delay), NULL);
-	g_signal_connect(spinner, "unmap", G_CALLBACK(stop_delay), NULL);
+	reveal_after_delay(spinner, NULL, NULL);
 	return spinner;
 }
 
