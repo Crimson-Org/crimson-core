@@ -5,6 +5,7 @@
 #include "common/app/frame-rate.h"
 #include "common/app/log.h"
 #include "common/widgets/dialogs.h"
+#include "common/widgets/spacing.h"
 
 #define COMMON_STYLE "common.css"
 
@@ -55,7 +56,24 @@ void load_style_resource(const char *name) {
 }
 
 
+#define SPACING_VARIABLE(name, value) "--spacing-" name ": " G_STRINGIFY(value) "px;"
+
+/* The spacing scale reaches the stylesheets as named values, such as var(--spacing-normal), so a gap in CSS and the
+ * same gap in code always come from one number */
+static const char SPACING_STYLE[] = ":root {"
+	SPACING_VARIABLE("hairline", SPACING_HAIRLINE) SPACING_VARIABLE("fine", SPACING_FINE)
+	SPACING_VARIABLE("tight", SPACING_TIGHT) SPACING_VARIABLE("small", SPACING_SMALL)
+	SPACING_VARIABLE("snug", SPACING_SNUG) SPACING_VARIABLE("compact", SPACING_COMPACT)
+	SPACING_VARIABLE("normal", SPACING_NORMAL) SPACING_VARIABLE("roomy", SPACING_ROOMY)
+	SPACING_VARIABLE("wide", SPACING_WIDE) SPACING_VARIABLE("large", SPACING_LARGE)
+	SPACING_VARIABLE("huge", SPACING_HUGE) "}";
+
+
 static void load_core_style(void) {
+	g_autoptr(GtkCssProvider) spacing = gtk_css_provider_new();
+	gtk_css_provider_load_from_string(spacing, SPACING_STYLE);
+	gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(spacing),
+		GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 	add_style_resource(CORE_RESOURCES "/" COMMON_STYLE);
 }
 

@@ -1,5 +1,10 @@
 /* Look and motion shared by every Crimson application */
 
+/* Corners this round make any height into a pill */
+:root {
+	--pill-radius: 9999px;
+}
+
 @keyframes pop-in {
 	from {
 		opacity: 0;
