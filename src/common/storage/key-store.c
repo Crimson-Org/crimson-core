@@ -40,7 +40,10 @@ void make_file_private(const char *path) {
 
 GKeyFile *load_key_file(const char *path, GKeyFileFlags flags) {
 	GKeyFile *file = g_key_file_new();
-	g_key_file_load_from_file(file, path, flags, NULL);
+	g_autoptr(GError) error = NULL;
+	/* A file that is there but cannot be read is replaced by the defaults on the next save, so that is said */
+	if (!g_key_file_load_from_file(file, path, flags, &error) && !g_error_matches(error, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+		g_warning("%s could not be read, so the defaults are used: %s", path, error->message);
 	return file;
 }
 
