@@ -30,6 +30,8 @@ typedef struct {
 	/* The program's own shortcuts, which may also give app.about, app.settings or app.quit other keys */
 	const Shortcut *shortcuts;
 	guint shortcut_count;
+	/* Whether a click outside the program's dialogs closes them, as for the About dialog */
+	gboolean closes_dialogs_outside;
 } ApplicationSetup;
 
 int run_application(const ApplicationSetup *setup, int argument_count, char **arguments);

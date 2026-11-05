@@ -4,6 +4,7 @@
 #include "common/widgets/button-presses.h"
 #include "common/app/frame-rate.h"
 #include "common/app/log.h"
+#include "common/widgets/dialogs.h"
 
 #define COMMON_STYLE "common.css"
 
@@ -70,6 +71,8 @@ static void show_about(GSimpleAction *action, GVariant *parameter, gpointer appl
 	adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(dialog), identity->name);
 	adw_about_dialog_set_application_icon(ADW_ABOUT_DIALOG(dialog), identity->id);
 	adw_about_dialog_set_version(ADW_ABOUT_DIALOG(dialog), identity->version);
+	if (current_setup->closes_dialogs_outside)
+		close_on_outside_click(dialog);
 	adw_dialog_present(dialog, get_active_window(application));
 }
 
