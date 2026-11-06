@@ -12,6 +12,7 @@
 #define RECENT_KEY "start-recent"
 #define CHOICES_KEY "start-choices"
 #define ITEM_KEY "start-key"
+#define REMOVE_ICON "window-close-symbolic"
 
 
 static GtkWidget *create_choice(const StartChoice *choice) {
@@ -73,9 +74,23 @@ static void press_item(GtkButton *button, const StartViewSetup *setup) {
 }
 
 
+/* The row goes at once, the keyboard moves on to the next row, or the one before when it was the last, and the card
+ * hides once it is empty, so the app only has to forget the item */
 static void press_remove(GtkButton *button, const StartViewSetup *setup) {
+	GtkWidget *row = gtk_widget_get_parent(GTK_WIDGET(button));
+	GtkWidget *list = gtk_widget_get_parent(row);
+	GtkWidget *next = gtk_widget_get_next_sibling(row);
+	if (!next)
+		next = gtk_widget_get_prev_sibling(row);
+	g_autofree char *key = g_strdup(g_object_get_data(G_OBJECT(button), ITEM_KEY));
+	gboolean had_focus = gtk_widget_has_focus(GTK_WIDGET(button));
+	gtk_box_remove(GTK_BOX(list), row);
+	if (next && had_focus)
+		gtk_widget_grab_focus(gtk_widget_get_last_child(next));
+	if (!next)
+		gtk_widget_set_visible(gtk_widget_get_parent(list), FALSE);
 	if (setup->forget)
-		setup->forget(g_object_get_data(G_OBJECT(button), ITEM_KEY), setup->data);
+		setup->forget(key, setup->data);
 }
 
 
@@ -104,7 +119,7 @@ static GtkWidget *create_recent_row(const StartRecent *item, const StartViewSetu
 	gtk_widget_set_tooltip_text(button, item->tooltip);
 	g_object_set_data_full(G_OBJECT(button), ITEM_KEY, g_strdup(item->key), g_free);
 	g_signal_connect(button, "clicked", G_CALLBACK(press_item), (gpointer)setup);
-	GtkWidget *remove = gtk_button_new_from_icon_name("window-close-symbolic");
+	GtkWidget *remove = gtk_button_new_from_icon_name(REMOVE_ICON);
 	gtk_widget_add_css_class(remove, "flat");
 	gtk_widget_add_css_class(remove, "circular");
 	gtk_widget_set_valign(remove, GTK_ALIGN_CENTER);
@@ -159,14 +174,20 @@ static GtkWidget *create_recent(const StartViewSetup *setup, GtkWidget *view) {
 }
 
 
-GtkWidget *create_start_view(const StartViewSetup *setup) {
-	GtkWidget *view = gtk_box_new(GTK_ORIENTATION_VERTICAL, SPACING_LARGE);
-	gtk_widget_add_css_class(view, "start-view");
-	gtk_widget_set_valign(view, GTK_ALIGN_CENTER);
-	gtk_widget_set_halign(view, GTK_ALIGN_CENTER);
+GtkWidget *create_start_view(const StartViewSetup *given) {
+	/* The view keeps its own copy of the setup, whose texts and choices are the app's constants */
+	StartViewSetup *setup = g_memdup2(given, sizeof(StartViewSetup));
+	GtkWidget *column = gtk_box_new(GTK_ORIENTATION_VERTICAL, SPACING_LARGE);
+	gtk_widget_add_css_class(column, "start-view");
+	gtk_widget_set_valign(column, GTK_ALIGN_CENTER);
+	gtk_widget_set_halign(column, GTK_ALIGN_CENTER);
+	/* A short window scrolls the page rather than growing to fit every recent item */
+	GtkWidget *view = gtk_scrolled_window_new();
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(view), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view), column);
 	gtk_widget_set_hexpand(view, TRUE);
 	gtk_widget_set_vexpand(view, TRUE);
-	g_object_set_data(G_OBJECT(view), SETUP_KEY, (gpointer)setup);
+	g_object_set_data_full(G_OBJECT(view), SETUP_KEY, setup, g_free);
 	GtkWidget *heading = gtk_box_new(GTK_ORIENTATION_VERTICAL, SPACING_NORMAL);
 	GtkWidget *icon = gtk_image_new_from_icon_name(get_application_identity()->id);
 	gtk_image_set_pixel_size(GTK_IMAGE(icon), START_ICON_SIZE);
@@ -175,22 +196,21 @@ GtkWidget *create_start_view(const StartViewSetup *setup) {
 	GtkWidget *title = gtk_label_new(get_application_identity()->name);
 	gtk_widget_add_css_class(title, "title-1");
 	gtk_box_append(GTK_BOX(heading), title);
-	gtk_box_append(GTK_BOX(view), heading);
+	gtk_box_append(GTK_BOX(column), heading);
 	/* Every card shares one size whatever its label */
 	GtkWidget *choices = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, SPACING_ROOMY);
 	gtk_box_set_homogeneous(GTK_BOX(choices), TRUE);
 	gtk_widget_set_halign(choices, GTK_ALIGN_CENTER);
-	for (guint index = 0; index < setup->choice_count; index++) {
+	for (guint index = 0; index < setup->choice_count; index++)
 		gtk_box_append(GTK_BOX(choices), create_choice(&setup->choices[index]));
-	}
-	gtk_box_append(GTK_BOX(view), choices);
+	gtk_box_append(GTK_BOX(column), choices);
 	g_object_set_data(G_OBJECT(view), CHOICES_KEY, choices);
 	if (setup->hint) {
 		GtkWidget *hint = gtk_label_new(setup->hint);
 		gtk_widget_add_css_class(hint, "dim-label");
-		gtk_box_append(GTK_BOX(view), hint);
+		gtk_box_append(GTK_BOX(column), hint);
 	}
-	gtk_box_append(GTK_BOX(view), create_recent(setup, view));
+	gtk_box_append(GTK_BOX(column), create_recent(setup, view));
 	return view;
 }
 

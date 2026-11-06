@@ -25,10 +25,10 @@
  * over their name and shortcut */
 
 .start-view {
-	animation: rise-in 400ms cubic-bezier(0.22, 1, 0.36, 1);
+	animation: start-rise-in 400ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@keyframes rise-in {
+@keyframes start-rise-in {
 	from {
 		opacity: 0;
 		transform: translateY(12px);

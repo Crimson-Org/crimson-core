@@ -26,11 +26,13 @@ typedef struct {
 	const char *hint;
 	/* The Recent card's heading and its remove button's name */
 	const char *recent_heading, *remove_text;
+	/* Remove takes the item off the card itself, so forget only has to stop remembering it */
 	StartRecentChosen open, forget;
 	gpointer data;
 } StartViewSetup;
 
-/* The setup is kept, not copied, so it must outlive the view, such as a static one */
+/* The view copies the setup, while the texts, choices and data it points to must outlive the view, as an app's
+ * constants and its window do. The view scrolls when the window is too short for it */
 GtkWidget *create_start_view(const StartViewSetup *setup);
 /* Shows these items in the Recent card, which hides while there are none */
 void set_start_view_recent(GtkWidget *view, const StartRecent *items, guint count);
