@@ -3,6 +3,11 @@
 /* Corners this round make any height into a pill */
 :root {
 	--pill-radius: 9999px;
+	--button-radius: 8px;
+	/* Quiet text, such as a shortcut under a name, and strong text, such as a card's name */
+	--quiet-opacity: 0.55;
+	--strong-weight: 600;
+	--small-font-size: 0.9em;
 }
 
 @keyframes pop-in {
@@ -14,4 +19,61 @@
 		opacity: 1;
 		transform: none;
 	}
+}
+
+/* The start page every app shows with nothing open: it rises in, and its cards show their icon in the accent colour
+ * over their name and shortcut */
+
+.start-view {
+	animation: rise-in 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes rise-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.start-button {
+	min-width: 232px;
+	padding: var(--spacing-large) var(--spacing-large) var(--spacing-wide);
+	font-weight: var(--strong-weight);
+}
+
+.start-button image {
+	color: var(--accent-color);
+}
+
+.start-shortcut {
+	font-weight: normal;
+	font-size: var(--small-font-size);
+	opacity: var(--quiet-opacity);
+}
+
+.recent-list {
+	padding: var(--spacing-tight);
+}
+
+.recent-row > button {
+	padding: var(--spacing-small) var(--spacing-compact);
+	border-radius: var(--button-radius);
+	font-weight: normal;
+}
+
+/* Recent items wait a moment before they dim while one opens, so a quick open never flashes them */
+.recent-files button,
+.recent-files label,
+.recent-files image {
+	transition: filter 150ms ease-out, opacity 150ms ease-out;
+}
+
+.recent-files button:disabled,
+.recent-files label:disabled,
+.recent-files image:disabled {
+	transition: filter 200ms ease-out 500ms, opacity 200ms ease-out 500ms;
 }
