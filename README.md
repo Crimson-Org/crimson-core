@@ -3,8 +3,8 @@
 
 ## Why
 
-All Crimson apps share this code for starting, scrolling, saving settings and themes.\
-A fix here applies to all apps at once.
+All Crimson apps share this code for starting, scrolling, settings and themes.\
+So every app starts, scrolls and looks the same.
 
 ## About
 
@@ -14,15 +14,11 @@ One launch path for the session log, the `--version` flag, the shared stylesheet
 
 ### Settings and state
 
-Config and state files for each app, including the window size between launches.
+Config and state files for each app.
 
 ### Smooth scrolling
 
 Mouse wheel steps glide, Shift scrolls sideways and touchpads keep their exact motion.
-
-### Sidebar width
-
-Dragging the sidebar edge changes the sidebar width, and the app keeps that width for the next launch.
 
 ### Long lines
 
@@ -40,7 +36,7 @@ The `crimson:window`, `crimson:titlebar`, `crimson:sidebar`, `crimson:statusbar`
 
 ### Loading
 
-A spinner that fades in after half a second each time it is shown, and content that fades in once loaded.
+A spinner that waits half a second before fading in, and content that fades in once loaded.
 
 ### Code views
 
