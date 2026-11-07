@@ -1,5 +1,5 @@
 <h1 align="center">Crimson Core</h1>
-<p align="center">The shared C library every Crimson app uses.</p>
+<p align="center">The shared C library behind the Crimson apps.</p>
 
 ## Why
 
