@@ -24,7 +24,7 @@ install_desktop_files() {
 	fi
 	# An application that acts on folders or files from the file manager ships a KDE service menu, which KDE only
 	# reads from a user folder when the file is executable
-	menu=assets/$APPLICATION_ID.servicemenu.desktop.in
+	menu=assets/$APPLICATION_ID.servicemenu.in
 	if [ -f "$menu" ]; then
 		mkdir -p "$share/kio/servicemenus"
 		sed "s|@EXEC@|$2|" "$menu" > "$share/kio/servicemenus/$APPLICATION_ID.desktop"
