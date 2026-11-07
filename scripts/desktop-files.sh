@@ -1,7 +1,7 @@
 # Shared by the install, uninstall, archive and AppImage scripts, which source it from the project folder
 #
-# APPLICATION_ID names the application, whose desktop files, icons, metainfo and file types live in assets/, and
-# EXTRA_LICENSES lists name=path pairs for bundled code
+# APPLICATION_ID names the application, whose desktop files, icons, metainfo, file types and service menu live in
+# assets/, and EXTRA_LICENSES lists name=path pairs for bundled code
 
 # Puts the desktop files, icons, metainfo and file types under $1/share, with each desktop file starting $2
 install_desktop_files() {
@@ -22,6 +22,14 @@ install_desktop_files() {
 	if [ -f "$types" ]; then
 		install -Dm644 "$types" "$share/mime/packages/$APPLICATION_ID.xml"
 	fi
+	# An application that acts on folders or files from the file manager ships a KDE service menu, which KDE only
+	# reads from a user folder when the file is executable
+	menu=assets/$APPLICATION_ID.servicemenu.desktop.in
+	if [ -f "$menu" ]; then
+		mkdir -p "$share/kio/servicemenus"
+		sed "s|@EXEC@|$2|" "$menu" > "$share/kio/servicemenus/$APPLICATION_ID.desktop"
+		chmod 755 "$share/kio/servicemenus/$APPLICATION_ID.desktop"
+	fi
 }
 
 remove_desktop_files() {
@@ -31,7 +39,7 @@ remove_desktop_files() {
 	done
 	rm -f "$share/icons/hicolor/scalable/apps/$APPLICATION_ID.svg" \
 		"$share/icons/hicolor/symbolic/apps/$APPLICATION_ID-symbolic.svg" "$share/metainfo/$APPLICATION_ID.metainfo.xml" \
-		"$share/mime/packages/$APPLICATION_ID.xml"
+		"$share/mime/packages/$APPLICATION_ID.xml" "$share/kio/servicemenus/$APPLICATION_ID.desktop"
 }
 
 # Menus, icon themes and file types read these caches, and systems without the tools have no caches to refresh
