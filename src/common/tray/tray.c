@@ -90,6 +90,8 @@ struct Tray {
 	/* The panel drops the icon as soon as the program gives up this bus name, without waiting for it to exit */
 	char *name;
 	guint name_id, watcher_id;
+	/* While a window that started hidden waits for the panel, which may start after the program at login */
+	guint wait_id;
 };
 
 
@@ -314,6 +316,8 @@ static void finish_registering(GObject *bus, GAsyncResult *result, gpointer data
 	Tray *tray = data;
 	g_autoptr(GVariant) answer = g_dbus_connection_call_finish(G_DBUS_CONNECTION(bus), result, NULL);
 	tray->is_shown = answer != NULL && tray->name_id;
+	if (tray->is_shown)
+		g_clear_handle_id(&tray->wait_id, g_source_remove);
 }
 
 
@@ -329,7 +333,7 @@ static void register_item(GDBusConnection *bus, const char *name, const char *ow
 static void forget_watcher(GDBusConnection *bus, const char *name, gpointer data) {
 	Tray *tray = data;
 	tray->is_shown = FALSE;
-	if (tray->window && !gtk_widget_get_visible(GTK_WIDGET(tray->window)))
+	if (tray->window && !tray->wait_id && !gtk_widget_get_visible(GTK_WIDGET(tray->window)))
 		gtk_window_present(tray->window);
 }
 
@@ -417,6 +421,23 @@ void hide_window_to_tray(Tray *tray) {
 }
 
 
+/* No panel took the icon in time, so the window shows minimized, the only way it can be brought back */
+static void stop_waiting(gpointer data) {
+	Tray *tray = data;
+	tray->wait_id = 0;
+	if (tray->is_shown || !tray->window)
+		return;
+	gtk_window_present(tray->window);
+	gtk_window_minimize(tray->window);
+}
+
+
+void wait_for_tray(Tray *tray, guint seconds) {
+	if (!tray->is_shown && !tray->wait_id)
+		tray->wait_id = g_timeout_add_seconds_once(seconds, stop_waiting, tray);
+}
+
+
 static void unregister_object(Tray *tray, guint *registration) {
 	if (*registration)
 		g_dbus_connection_unregister_object(tray->bus, *registration);
@@ -425,6 +446,7 @@ static void unregister_object(Tray *tray, guint *registration) {
 
 
 void remove_tray(Tray *tray) {
+	g_clear_handle_id(&tray->wait_id, g_source_remove);
 	g_clear_handle_id(&tray->watcher_id, g_bus_unwatch_name);
 	g_clear_handle_id(&tray->name_id, g_bus_unown_name);
 	unregister_object(tray, &tray->item_registration);

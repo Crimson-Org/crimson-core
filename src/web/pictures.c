@@ -1,0 +1,408 @@
+#include <gdk-pixbuf/gdk-pixbuf.h>
+#include <glib/gstdio.h>
+#include <libsoup/soup.h>
+#include <string.h>
+
+#include "common/storage/key-store.h"
+#include "web/pictures.h"
+#include "web/web.h"
+
+#define LARGEST_PICTURE_BYTES (10 * 1024 * 1024)
+#define DEFAULT_SIZE_LIMIT 640
+/* Pictures smaller than this on their longest side are enlarged to it */
+#define SMALLEST_PICTURE 96
+#define CACHE_FOLDER "pictures"
+/* Kept pictures nobody showed for this long are removed, so the folder only holds what is still seen */
+#define KEPT_PICTURE_DAYS 30
+/* Next to each kept picture, the request header and value that ask its server whether it changed */
+#define VERSION_SUFFIX ".version"
+#define ADDRESS_KEY "picture-address"
+#define READY_KEY "picture-ready"
+
+static int size_limit = DEFAULT_SIZE_LIMIT;
+static CertificateCheck certificate_check;
+/* Addresses to their loaded textures, to the widgets showing or waiting for each, and those being fetched */
+static GHashTable *loaded, *watchers, *fetching;
+
+/* A picture being read or downloaded, and whether it is kept on disk for the next start */
+typedef struct {
+	char *address, *path;
+	gboolean is_kept, is_cached;
+	GBytes *bytes;
+	GCancellable *cancellable;
+	guint64 received;
+	char *version_header, *version;
+} Fetch;
+
+
+void set_web_picture_size_limit(int pixels) {
+	size_limit = pixels;
+}
+
+
+void set_web_picture_certificate_check(CertificateCheck check) {
+	certificate_check = check;
+}
+
+
+static void free_weak_reference(GWeakRef *reference) {
+	g_weak_ref_clear(reference);
+	g_free(reference);
+}
+
+
+static void free_fetch(Fetch *fetch) {
+	g_free(fetch->address);
+	g_free(fetch->path);
+	g_clear_pointer(&fetch->bytes, g_bytes_unref);
+	g_clear_object(&fetch->cancellable);
+	g_free(fetch->version_header);
+	g_free(fetch->version);
+	g_free(fetch);
+}
+
+
+static void remove_old_pictures(GTask *task, gpointer source, gpointer data, GCancellable *cancellable) {
+	g_autofree char *folder = get_cache_file_path(CACHE_FOLDER);
+	remove_old_files(folder, KEPT_PICTURE_DAYS);
+}
+
+
+static void ensure_tables(void) {
+	if (loaded)
+		return;
+	g_autoptr(GTask) trimming = g_task_new(NULL, NULL, NULL, NULL);
+	g_task_run_in_thread(trimming, remove_old_pictures);
+	loaded = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+	watchers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_ptr_array_unref);
+	fetching = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+}
+
+
+/* Kept pictures are named by a checksum of their address */
+static char *build_cache_path(const char *address) {
+	g_autofree char *name = g_compute_checksum_for_string(G_CHECKSUM_SHA256, address, -1);
+	g_autofree char *folder = get_cache_file_path(CACHE_FOLDER);
+	return g_build_filename(folder, name, NULL);
+}
+
+
+static void apply_texture(GtkWidget *widget, GdkTexture *texture) {
+	if (ADW_IS_AVATAR(widget))
+		adw_avatar_set_custom_image(ADW_AVATAR(widget), GDK_PAINTABLE(texture));
+	else if (GTK_IS_PICTURE(widget))
+		gtk_picture_set_paintable(GTK_PICTURE(widget), GDK_PAINTABLE(texture));
+}
+
+
+static gboolean is_showing(GtkWidget *widget, const char *address) {
+	return widget && g_strcmp0(g_object_get_data(G_OBJECT(widget), ADDRESS_KEY), address) == 0;
+}
+
+
+/* Widgets stay listed while they show the address, so a newer version of the picture gets to them too */
+static void watch_picture(GtkWidget *widget, const char *address) {
+	GPtrArray *targets = g_hash_table_lookup(watchers, address);
+	if (!targets) {
+		targets = g_ptr_array_new_with_free_func((GDestroyNotify)free_weak_reference);
+		g_hash_table_insert(watchers, g_strdup(address), targets);
+	}
+	for (guint index = targets->len; index > 0; index--) {
+		g_autoptr(GtkWidget) target = g_weak_ref_get(g_ptr_array_index(targets, index - 1));
+		if (target == widget)
+			return;
+		if (!is_showing(target, address))
+			g_ptr_array_remove_index_fast(targets, index - 1);
+	}
+	GWeakRef *reference = g_new0(GWeakRef, 1);
+	g_weak_ref_init(reference, widget);
+	g_ptr_array_add(targets, reference);
+}
+
+
+static void hand_out_texture(const char *address, GdkTexture *texture) {
+	/* The texture is shared first, so a widget rebuilt on arrival finds it at once */
+	if (texture)
+		g_hash_table_insert(loaded, g_strdup(address), g_object_ref(texture));
+	GPtrArray *targets = g_hash_table_lookup(watchers, address);
+	for (guint index = targets ? targets->len : 0; index > 0; index--) {
+		g_autoptr(GtkWidget) widget = g_weak_ref_get(g_ptr_array_index(targets, index - 1));
+		if (!is_showing(widget, address))
+			g_ptr_array_remove_index_fast(targets, index - 1);
+		else if (texture)
+			apply_texture(widget, texture);
+		else if (g_object_get_data(G_OBJECT(widget), READY_KEY))
+			g_object_notify(G_OBJECT(widget), "paintable");
+	}
+	if (targets && !targets->len)
+		g_hash_table_remove(watchers, address);
+}
+
+
+static void fit_picture(GdkPixbufLoader *loader, int width, int height, gpointer data) {
+	double scale = (double)size_limit / MAX(width, height);
+	if (scale < 1)
+		gdk_pixbuf_loader_set_size(loader, MAX(1, (int)(width * scale)), MAX(1, (int)(height * scale)));
+}
+
+
+static GdkTexture *decode_fitted_picture(GBytes *bytes) {
+	g_autoptr(GdkPixbufLoader) loader = gdk_pixbuf_loader_new();
+	g_signal_connect(loader, "size-prepared", G_CALLBACK(fit_picture), NULL);
+	gboolean is_written = gdk_pixbuf_loader_write_bytes(loader, bytes, NULL);
+	if (!gdk_pixbuf_loader_close(loader, NULL) || !is_written)
+		return NULL;
+	GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+	if (!pixbuf)
+		return NULL;
+	/* A tiny picture, such as an old site icon, is enlarged smoothly here, since the toolkit enlarges it blocky */
+	g_autoptr(GdkPixbuf) enlarged = NULL;
+	int longest = MAX(gdk_pixbuf_get_width(pixbuf), gdk_pixbuf_get_height(pixbuf));
+	if (longest < SMALLEST_PICTURE) {
+		double scale = (double)SMALLEST_PICTURE / longest;
+		enlarged = gdk_pixbuf_scale_simple(pixbuf, (int)(gdk_pixbuf_get_width(pixbuf) * scale),
+			(int)(gdk_pixbuf_get_height(pixbuf) * scale), GDK_INTERP_HYPER);
+		pixbuf = enlarged;
+	}
+	g_autoptr(GBytes) pixels = gdk_pixbuf_read_pixel_bytes(pixbuf);
+	return gdk_memory_texture_new(gdk_pixbuf_get_width(pixbuf), gdk_pixbuf_get_height(pixbuf),
+		gdk_pixbuf_get_has_alpha(pixbuf) ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8, pixels,
+		(gsize)gdk_pixbuf_get_rowstride(pixbuf));
+}
+
+
+/* Decoding takes long enough to hold up drawing, so it happens on a worker thread, and a format the picture
+ * loaders lack is still read at full size by the toolkit */
+static GdkTexture *decode_picture(GBytes *bytes, GError **error) {
+	GdkTexture *texture = decode_fitted_picture(bytes);
+	return texture ? texture : gdk_texture_new_from_bytes(bytes, error);
+}
+
+
+static void keep_picture(Fetch *fetch) {
+	g_autofree char *version_path = g_strconcat(fetch->path, VERSION_SUFFIX, NULL);
+	gsize length = 0;
+	const char *contents = g_bytes_get_data(fetch->bytes, &length);
+	save_file_bytes(fetch->path, contents, length, FALSE);
+	if (!fetch->version) {
+		g_unlink(version_path);
+		return;
+	}
+	g_autofree char *version = g_strconcat(fetch->version_header, "\n", fetch->version, NULL);
+	save_text_file(version_path, version, FALSE);
+}
+
+
+static void decode_download(GTask *task, gpointer source, gpointer data, GCancellable *cancellable) {
+	Fetch *fetch = data;
+	GError *error = NULL;
+	GdkTexture *texture = decode_picture(fetch->bytes, &error);
+	if (!texture) {
+		g_task_return_error(task, error);
+		return;
+	}
+	if (fetch->is_kept)
+		keep_picture(fetch);
+	g_task_return_pointer(task, texture, g_object_unref);
+}
+
+
+static void read_picture_file(GTask *task, gpointer source, gpointer data, GCancellable *cancellable) {
+	Fetch *fetch = data;
+	GError *error = NULL;
+	char *contents = NULL;
+	gsize length = 0;
+	if (!g_file_get_contents(fetch->path, &contents, &length, &error)) {
+		g_task_return_error(task, error);
+		return;
+	}
+	g_autofree char *version_path = g_strconcat(fetch->path, VERSION_SUFFIX, NULL);
+	mark_file_used(fetch->path);
+	mark_file_used(version_path);
+	g_autoptr(GBytes) bytes = g_bytes_new_take(contents, length);
+	GdkTexture *texture = decode_picture(bytes, &error);
+	if (texture)
+		g_task_return_pointer(task, texture, g_object_unref);
+	else
+		g_task_return_error(task, error);
+}
+
+
+static void finish_fetch(Fetch *fetch, GdkTexture *texture) {
+	if (texture || !fetch->is_cached)
+		hand_out_texture(fetch->address, texture);
+	g_hash_table_remove(fetching, fetch->address);
+	free_fetch(fetch);
+}
+
+
+static void finish_decoding(GObject *source, GAsyncResult *result, gpointer data) {
+	g_autoptr(GdkTexture) texture = g_task_propagate_pointer(G_TASK(result), NULL);
+	finish_fetch(data, texture);
+}
+
+
+static void finish_download(GObject *source, GAsyncResult *result, gpointer data) {
+	Fetch *fetch = data;
+	g_autoptr(GBytes) bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), result, NULL);
+	SoupMessage *message = soup_session_get_async_result_message(SOUP_SESSION(source), result);
+	gboolean is_usable = bytes && message && soup_message_get_status(message) == SOUP_STATUS_OK
+		&& g_bytes_get_size(bytes) <= LARGEST_PICTURE_BYTES;
+	if (!is_usable) {
+		finish_fetch(fetch, NULL);
+		return;
+	}
+	SoupMessageHeaders *headers = soup_message_get_response_headers(message);
+	const char *tag = soup_message_headers_get_one(headers, "ETag");
+	const char *modified = soup_message_headers_get_one(headers, "Last-Modified");
+	fetch->version_header = g_strdup(tag ? "If-None-Match" : "If-Modified-Since");
+	fetch->version = g_strdup(tag ? tag : modified);
+	fetch->bytes = g_bytes_ref(bytes);
+	GTask *task = g_task_new(NULL, NULL, finish_decoding, fetch);
+	g_task_set_task_data(task, fetch, NULL);
+	g_task_run_in_thread(task, decode_download);
+	g_object_unref(task);
+}
+
+
+static gboolean accept_certificate(SoupMessage *message, GTlsCertificate *certificate, GTlsCertificateFlags errors,
+	gpointer data) {
+	return certificate_check && certificate_check(certificate);
+}
+
+
+static void check_announced_size(SoupMessage *message, Fetch *fetch) {
+	goffset length = soup_message_headers_get_content_length(soup_message_get_response_headers(message));
+	if (length > LARGEST_PICTURE_BYTES)
+		g_cancellable_cancel(fetch->cancellable);
+}
+
+
+static void count_received_bytes(SoupMessage *message, guint size, Fetch *fetch) {
+	fetch->received += size;
+	if (fetch->received > LARGEST_PICTURE_BYTES)
+		g_cancellable_cancel(fetch->cancellable);
+}
+
+
+/* A kept picture is requested again only where its server named a version, and an unchanged one costs no
+ * download, while a server that named none changes the address for a new picture */
+static void download_picture(Fetch *fetch) {
+	g_autoptr(SoupMessage) message = soup_message_new(SOUP_METHOD_GET, fetch->address);
+	g_autofree char *version_path = fetch->is_cached ? g_strconcat(fetch->path, VERSION_SUFFIX, NULL) : NULL;
+	g_autofree char *version = NULL;
+	if (version_path && !g_file_get_contents(version_path, &version, NULL, NULL))
+		g_clear_pointer(&version, g_free);
+	g_auto(GStrv) parts = version ? g_strsplit(version, "\n", 2) : NULL;
+	if (!message || (fetch->is_cached && (!parts || g_strv_length(parts) != 2))) {
+		finish_fetch(fetch, NULL);
+		return;
+	}
+	if (parts)
+		soup_message_headers_replace(soup_message_get_request_headers(message), parts[0], parts[1]);
+	g_signal_connect(message, "accept-certificate", G_CALLBACK(accept_certificate), NULL);
+	g_signal_connect(message, "got-headers", G_CALLBACK(check_announced_size), fetch);
+	g_signal_connect(message, "got-body-data", G_CALLBACK(count_received_bytes), fetch);
+	g_clear_object(&fetch->cancellable);
+	fetch->cancellable = g_cancellable_new();
+	fetch->received = 0;
+	soup_session_send_and_read_async(get_web_session(), message, G_PRIORITY_LOW, fetch->cancellable,
+		finish_download, fetch);
+}
+
+
+/* A kept picture shows from disk at once and is then checked for a newer version, and a missing one downloads */
+static void finish_reading(GObject *source, GAsyncResult *result, gpointer data) {
+	Fetch *fetch = data;
+	g_autoptr(GdkTexture) texture = g_task_propagate_pointer(G_TASK(result), NULL);
+	fetch->is_cached = texture != NULL;
+	if (texture)
+		hand_out_texture(fetch->address, texture);
+	download_picture(fetch);
+}
+
+
+static void read_kept_picture(Fetch *fetch) {
+	GTask *task = g_task_new(NULL, NULL, finish_reading, fetch);
+	g_task_set_task_data(task, fetch, NULL);
+	g_task_run_in_thread(task, read_picture_file);
+	g_object_unref(task);
+}
+
+
+static void request_picture(GtkWidget *widget, const char *address, gboolean is_kept) {
+	ensure_tables();
+	g_object_set_data_full(G_OBJECT(widget), ADDRESS_KEY, g_strdup(address), g_free);
+	watch_picture(widget, address);
+	GdkTexture *texture = g_hash_table_lookup(loaded, address);
+	if (texture) {
+		apply_texture(widget, texture);
+		return;
+	}
+	if (g_hash_table_contains(fetching, address))
+		return;
+	g_hash_table_add(fetching, g_strdup(address));
+	Fetch *fetch = g_new0(Fetch, 1);
+	fetch->address = g_strdup(address);
+	fetch->is_kept = is_kept;
+	if (is_kept) {
+		fetch->path = build_cache_path(address);
+		read_kept_picture(fetch);
+	} else {
+		download_picture(fetch);
+	}
+}
+
+
+/* Only web addresses load, since an address from a feed or a message could name any file on disk */
+static gboolean is_web_address(const char *address) {
+	return address && (g_str_has_prefix(address, "https://") || g_str_has_prefix(address, "http://"));
+}
+
+
+void show_web_picture(GtkWidget *widget, const char *address, gboolean is_kept) {
+	if (is_showing(widget, address))
+		return;
+	apply_texture(widget, NULL);
+	g_object_set_data(G_OBJECT(widget), ADDRESS_KEY, NULL);
+	if (is_web_address(address))
+		request_picture(widget, address, is_kept);
+}
+
+
+GdkTexture *get_web_picture(const char *address) {
+	ensure_tables();
+	return address ? g_hash_table_lookup(loaded, address) : NULL;
+}
+
+
+/* Who waits for a preloaded picture and what to call when it is ready */
+typedef struct {
+	PictureReady ready;
+	GWeakRef owner;
+} Preload;
+
+
+static void tell_owner(GObject *helper, GParamSpec *spec, gpointer data) {
+	Preload *preload = data;
+	g_autoptr(GObject) owner = g_weak_ref_get(&preload->owner);
+	if (owner && gtk_picture_get_paintable(GTK_PICTURE(helper)))
+		preload->ready(owner);
+	g_weak_ref_clear(&preload->owner);
+	g_free(preload);
+	g_object_unref(helper);
+}
+
+
+/* A hidden picture stands in for the owner while loading, which reuses the loader's list of watchers */
+void preload_web_picture(const char *address, PictureReady ready, GObject *owner) {
+	if (!is_web_address(address) || get_web_picture(address))
+		return;
+	GtkWidget *helper = g_object_ref_sink(gtk_picture_new());
+	Preload *preload = g_new0(Preload, 1);
+	preload->ready = ready;
+	g_weak_ref_init(&preload->owner, owner);
+	g_object_set_data(G_OBJECT(helper), READY_KEY, preload);
+	g_signal_connect(helper, "notify::paintable", G_CALLBACK(tell_owner), preload);
+	request_picture(helper, address, FALSE);
+}

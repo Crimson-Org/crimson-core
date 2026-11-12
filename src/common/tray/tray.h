@@ -30,5 +30,8 @@ gboolean is_tray_shown(Tray *tray);
 /* Hides the window into the tray, or minimizes it when no panel took the icon, since a hidden window could not be
  * brought back then */
 void hide_window_to_tray(Tray *tray);
+/* Keeps a window that starts hidden, such as at login, out of sight while the panel starts, and shows it minimized
+ * when no panel took the icon within the seconds */
+void wait_for_tray(Tray *tray, guint seconds);
 /* Takes the icon off the panel at once, such as while the program quits, after which the panel reaches nothing */
 void remove_tray(Tray *tray);
