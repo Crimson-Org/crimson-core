@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 
 #include <adwaita.h>
 
@@ -79,6 +80,18 @@ static GdkTexture *get_grain(void) {
 }
 
 
+/* Rounding can carry a share a hair past its range, and a picture of odd bits can give no number at all, which GTK
+ * refuses, so every share is brought into range first */
+static float to_share(float value) {
+	return isfinite(value) ? CLAMP(value, 0, 1) : 0;
+}
+
+
+static void set_hsv(GdkRGBA *color, float hue, float saturation, float value) {
+	gtk_hsv_to_rgb(to_share(hue), to_share(saturation), to_share(value), &color->red, &color->green, &color->blue);
+}
+
+
 void read_text_colors(const char *text, GdkRGBA colors[WASH_COLOR_COUNT]) {
 	guint hash = g_str_hash(text ? text : "");
 	double hue = hash % (guint)(DEGREES - MUDDY_HUE_WIDTH);
@@ -86,9 +99,8 @@ void read_text_colors(const char *text, GdkRGBA colors[WASH_COLOR_COUNT]) {
 		hue += MUDDY_HUE_WIDTH;
 	for (int index = 0; index < WASH_COLOR_COUNT; index++) {
 		double shifted = fmod(hue + (index - 1) * HUE_SPREAD + DEGREES, DEGREES) / DEGREES;
-		float red, green, blue;
-		gtk_hsv_to_rgb((float)shifted, TEXT_SATURATION, TEXT_VALUE, &red, &green, &blue);
-		colors[index] = (GdkRGBA){red, green, blue, 1};
+		colors[index] = (GdkRGBA){0, 0, 0, 1};
+		set_hsv(&colors[index], (float)shifted, TEXT_SATURATION, TEXT_VALUE);
 	}
 }
 
@@ -108,8 +120,8 @@ static int compare_chroma(gconstpointer first, gconstpointer second) {
 static GdkRGBA enrich(GdkRGBA color) {
 	float hue, saturation, value;
 	gtk_rgb_to_hsv(color.red, color.green, color.blue, &hue, &saturation, &value);
-	gtk_hsv_to_rgb(hue, MAX(saturation, PICTURE_SATURATION_MINIMUM), CLAMP(value, PICTURE_VALUE_MINIMUM,
-		PICTURE_VALUE_MAXIMUM), &color.red, &color.green, &color.blue);
+	set_hsv(&color, hue, MAX(saturation, PICTURE_SATURATION_MINIMUM), CLAMP(value, PICTURE_VALUE_MINIMUM,
+		PICTURE_VALUE_MAXIMUM));
 	color.alpha = 1;
 	return color;
 }
@@ -168,7 +180,7 @@ static GdkRGBA shift_color(GdkRGBA color, GRand *random) {
 	gtk_rgb_to_hsv(color.red, color.green, color.blue, &hue, &saturation, &value);
 	hue = fmodf(hue + (float)g_rand_double_range(random, -HUE_SHIFT, HUE_SHIFT) + 1, 1);
 	value = CLAMP(value + (float)g_rand_double_range(random, -VALUE_SHIFT, VALUE_SHIFT), 0, 1);
-	gtk_hsv_to_rgb(hue, saturation, value, &color.red, &color.green, &color.blue);
+	set_hsv(&color, hue, saturation, value);
 	return color;
 }
 
@@ -191,7 +203,7 @@ static void place_blobs(CrimsonWash *wash, Blob blobs[BLOB_COUNT]) {
 static GdkRGBA darken(GdkRGBA color, float value) {
 	float hue, saturation, brightness;
 	gtk_rgb_to_hsv(color.red, color.green, color.blue, &hue, &saturation, &brightness);
-	gtk_hsv_to_rgb(hue, saturation, brightness * value, &color.red, &color.green, &color.blue);
+	set_hsv(&color, hue, saturation, brightness * value);
 	return color;
 }
 
@@ -238,6 +250,18 @@ static GdkTexture *paint(CrimsonWash *wash) {
 static void repaint(CrimsonWash *wash) {
 	g_clear_object(&wash->painted);
 	gtk_widget_queue_draw(GTK_WIDGET(wash));
+}
+
+
+/* Filling a recycled card again with the same story keeps the painted wash, so nothing is painted or uploaded twice */
+static void take_colors(CrimsonWash *wash, const GdkRGBA colors[WASH_COLOR_COUNT], guint seed) {
+	if (wash->has_colors && wash->seed == seed && memcmp(wash->colors, colors, sizeof wash->colors) == 0)
+		return;
+	if (colors != wash->colors)
+		memcpy(wash->colors, colors, sizeof wash->colors);
+	wash->seed = seed;
+	wash->has_colors = TRUE;
+	repaint(wash);
 }
 
 
@@ -319,25 +343,36 @@ GtkWidget *create_wash(GtkWidget *child) {
 
 
 void set_wash_text(GtkWidget *widget, const char *text) {
-	CrimsonWash *wash = CRIMSON_WASH(widget);
-	read_text_colors(text, wash->colors);
-	wash->seed = g_str_hash(text ? text : "");
-	wash->has_colors = TRUE;
-	repaint(wash);
+	GdkRGBA colors[WASH_COLOR_COUNT];
+	read_text_colors(text, colors);
+	take_colors(CRIMSON_WASH(widget), colors, g_str_hash(text ? text : ""));
 }
 
 
 void set_wash_seed(GtkWidget *widget, const char *text) {
 	CrimsonWash *wash = CRIMSON_WASH(widget);
-	wash->seed = g_str_hash(text ? text : "");
-	repaint(wash);
+	take_colors(wash, wash->colors, g_str_hash(text ? text : ""));
 }
 
 
 void set_wash_picture(GtkWidget *widget, GdkTexture *texture) {
 	CrimsonWash *wash = CRIMSON_WASH(widget);
-	read_picture_colors(texture, wash->colors);
-	wash->has_colors = TRUE;
+	GdkRGBA colors[WASH_COLOR_COUNT];
+	read_picture_colors(texture, colors);
+	take_colors(wash, colors, wash->seed);
+}
+
+
+void set_wash_colors(GtkWidget *widget, const GdkRGBA colors[WASH_COLOR_COUNT], const char *seed) {
+	take_colors(CRIMSON_WASH(widget), colors, g_str_hash(seed ? seed : ""));
+}
+
+
+void clear_wash(GtkWidget *widget) {
+	CrimsonWash *wash = CRIMSON_WASH(widget);
+	if (!wash->has_colors)
+		return;
+	wash->has_colors = FALSE;
 	repaint(wash);
 }
 

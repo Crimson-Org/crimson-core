@@ -16,6 +16,10 @@ void set_wash_text(GtkWidget *wash, const char *text);
 void set_wash_picture(GtkWidget *wash, GdkTexture *texture);
 /* Places the blobs by a text, so washes of the same colours still differ, such as two stories of one site */
 void set_wash_seed(GtkWidget *wash, const char *text);
+/* Colours worked out elsewhere, such as from a site's icon once for all of its stories, placed by the seed */
+void set_wash_colors(GtkWidget *wash, const GdkRGBA colors[WASH_COLOR_COUNT], const char *seed);
+/* Draws no colours until they are set again, such as once a picture covers the whole wash */
+void clear_wash(GtkWidget *wash);
 /* How strongly the colours show over the background, from zero to one */
 void set_wash_strength(GtkWidget *wash, float strength);
 /* Fades the colours out towards the bottom and the sides, so a wash at a page's top melts into the page */
