@@ -273,15 +273,14 @@ static void draw_wash(GtkWidget *widget, GtkSnapshot *snapshot) {
 			wash->painted = paint(wash);
 		graphene_rect_t area = GRAPHENE_RECT_INIT(0, 0, width, height);
 		gtk_snapshot_append_scaled_texture(snapshot, wash->painted, GSK_SCALING_FILTER_TRILINEAR, &area);
-		/* The grain only shows where the colours do, so a fading wash leaves no speckled box behind */
-		gtk_snapshot_push_mask(snapshot, GSK_MASK_MODE_ALPHA);
-		gtk_snapshot_append_scaled_texture(snapshot, wash->painted, GSK_SCALING_FILTER_TRILINEAR, &area);
-		gtk_snapshot_pop(snapshot);
-		graphene_rect_t tile = GRAPHENE_RECT_INIT(0, 0, GRAIN_SIZE, GRAIN_SIZE);
-		gtk_snapshot_push_repeat(snapshot, &area, &tile);
-		gtk_snapshot_append_texture(snapshot, get_grain(), &tile);
-		gtk_snapshot_pop(snapshot);
-		gtk_snapshot_pop(snapshot);
+		/* A fading wash melts into the page without grain, since grain fading with it needs a mask, which the
+		 * renderer draws into a new image every frame, a cost that shows on a page scrolled or played over it */
+		if (!wash->is_fading) {
+			graphene_rect_t tile = GRAPHENE_RECT_INIT(0, 0, GRAIN_SIZE, GRAIN_SIZE);
+			gtk_snapshot_push_repeat(snapshot, &area, &tile);
+			gtk_snapshot_append_texture(snapshot, get_grain(), &tile);
+			gtk_snapshot_pop(snapshot);
+		}
 	}
 	if (wash->child)
 		gtk_widget_snapshot_child(widget, wash->child, snapshot);

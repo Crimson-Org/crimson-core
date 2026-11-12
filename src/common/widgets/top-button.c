@@ -22,6 +22,7 @@ static void follow_scrolling(GtkAdjustment *adjustment, GtkWidget *button) {
 	else
 		gtk_widget_remove_css_class(button, SHOWN_CLASS);
 	gtk_widget_set_can_target(button, is_down);
+	gtk_widget_set_focusable(button, is_down);
 }
 
 
@@ -45,6 +46,7 @@ GtkWidget *add_top_button(GtkScrolledWindow *scroller, const char *tooltip) {
 	gtk_widget_set_halign(button, GTK_ALIGN_END);
 	gtk_widget_set_valign(button, GTK_ALIGN_END);
 	gtk_widget_set_can_target(button, FALSE);
+	gtk_widget_set_focusable(button, FALSE);
 	GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(scroller);
 	g_signal_connect_object(adjustment, "value-changed", G_CALLBACK(follow_scrolling), button, 0);
 	g_signal_connect_object(adjustment, "changed", G_CALLBACK(follow_scrolling), button, 0);
