@@ -19,7 +19,14 @@
 #define CONSENT_COOKIE "SOCS"
 #define CONSENT_REJECTED "CAI"
 #define CONSENT_DOMAIN ".youtube.com"
-#define CONSENT_SECONDS (SOUP_COOKIE_MAX_AGE_ONE_YEAR * 2)
+#define COOKIE_SECONDS (SOUP_COOKIE_MAX_AGE_ONE_YEAR * 2)
+/* YouTube keeps its preferences as fields in one cookie, where one hexadecimal field holds the theme */
+#define PREFERENCE_COOKIE "PREF"
+#define PREFERENCE_ADDRESS "https://www.youtube.com/"
+#define PREFERENCE_SEPARATOR "&"
+#define THEME_FIELD "f6"
+#define PREFERENCE_BASE 16
+#define DARK_THEME_FLAG 0x400
 /* A page drawn without the GPU shows video frames as plain green when WebKit hands video to the GPU */
 #define CPU_RENDERING_VARIABLE "WEBKIT_SKIA_ENABLE_CPU_RENDERING"
 #define GL_VIDEO_OFF_VARIABLE "WEBKIT_GST_DISABLE_GL_SINK"
@@ -368,15 +375,56 @@ static void open_site(GObject *cookies, GAsyncResult *result, gpointer data) {
 
 /* Visitors who are not signed in meet Google's cookie consent page first, which the shared script never runs on, so
  * the choice to reject the optional cookies is made in advance, as YouTube's consent cookie writes it */
+static void add_consent(GObject *cookies, GAsyncResult *result, gpointer data) {
+	webkit_cookie_manager_add_cookie_finish(WEBKIT_COOKIE_MANAGER(cookies), result, NULL);
+	g_autoptr(SoupCookie) consent = soup_cookie_new(CONSENT_COOKIE, CONSENT_REJECTED, CONSENT_DOMAIN, "/",
+		COOKIE_SECONDS);
+	soup_cookie_set_secure(consent, TRUE);
+	webkit_cookie_manager_add_cookie(WEBKIT_COOKIE_MANAGER(cookies), consent, NULL, open_site, data);
+}
+
+
+/* The viewer's YouTube preferences with the dark theme flag set and every other preference kept */
+static char *choose_dark_theme(const char *preferences) {
+	g_auto(GStrv) fields = g_strsplit(preferences ? preferences : "", PREFERENCE_SEPARATOR, -1);
+	g_autoptr(GStrvBuilder) kept = g_strv_builder_new();
+	guint64 theme = 0;
+	for (char **field = fields; *field; field++) {
+		if (g_str_has_prefix(*field, THEME_FIELD "="))
+			theme = g_ascii_strtoull(*field + strlen(THEME_FIELD "="), NULL, PREFERENCE_BASE);
+		else if (**field)
+			g_strv_builder_add(kept, *field);
+	}
+	g_autofree char *field = g_strdup_printf(THEME_FIELD "=%" G_GINT64_MODIFIER "x", theme | DARK_THEME_FLAG);
+	g_strv_builder_add(kept, field);
+	g_auto(GStrv) joined = g_strv_builder_end(kept);
+	return g_strjoinv(PREFERENCE_SEPARATOR, joined);
+}
+
+
+/* YouTube picks its dark theme by itself on the first video and reloads the page for it, which stops that video, so
+ * the dark theme is chosen in advance */
+static void add_preferences(GObject *cookies, GAsyncResult *result, gpointer data) {
+	GList *found = webkit_cookie_manager_get_cookies_finish(WEBKIT_COOKIE_MANAGER(cookies), result, NULL);
+	const char *preferences = NULL;
+	for (GList *link = found; link; link = link->next) {
+		if (strcmp(soup_cookie_get_name(link->data), PREFERENCE_COOKIE) == 0)
+			preferences = soup_cookie_get_value(link->data);
+	}
+	g_autofree char *value = choose_dark_theme(preferences);
+	g_list_free_full(found, (GDestroyNotify)soup_cookie_free);
+	g_autoptr(SoupCookie) cookie = soup_cookie_new(PREFERENCE_COOKIE, value, CONSENT_DOMAIN, "/", COOKIE_SECONDS);
+	soup_cookie_set_secure(cookie, TRUE);
+	webkit_cookie_manager_add_cookie(WEBKIT_COOKIE_MANAGER(cookies), cookie, NULL, add_consent, data);
+}
+
+
 void reload_youtube_page(YouTubePage *page) {
 	g_autofree char *moment = g_strdup_printf("Opening %s", page->site->name);
 	note_startup_moment(moment);
 	page->is_ready = FALSE;
 	WebKitCookieManager *cookies = webkit_network_session_get_cookie_manager(page->session);
-	g_autoptr(SoupCookie) consent = soup_cookie_new(CONSENT_COOKIE, CONSENT_REJECTED, CONSENT_DOMAIN, "/",
-		CONSENT_SECONDS);
-	soup_cookie_set_secure(consent, TRUE);
-	webkit_cookie_manager_add_cookie(cookies, consent, NULL, open_site, page);
+	webkit_cookie_manager_get_cookies(cookies, PREFERENCE_ADDRESS, NULL, add_preferences, page);
 }
 
 
