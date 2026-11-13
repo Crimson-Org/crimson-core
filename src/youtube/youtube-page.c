@@ -46,14 +46,24 @@ struct YouTubePage {
 	YouTubeVideoDrawn video_drawn;
 	/* Calls made before the page was ready, run in order once it is */
 	GPtrArray *waiting_calls;
+	/* Calls the page runs now, which a page that loads anew cuts off, so they go back to wait for the new one */
+	GPtrArray *running_calls;
+	guint last_run;
 	guint retry_source, retry_seconds;
 };
 
-/* A function body for the page with its arguments, kept until the page can run it */
+/* A function body for the page with its arguments, kept until the page has run it, with the number of its last run */
 typedef struct {
 	char *body;
 	GVariant *arguments;
+	guint run;
 } PageCall;
+
+/* Which run of a call a finished run was */
+typedef struct {
+	YouTubePage *page;
+	guint run;
+} PageRun;
 
 
 static void free_page_call(gpointer data) {
@@ -65,18 +75,43 @@ static void free_page_call(gpointer data) {
 }
 
 
+/* A run cut off by a page that loaded anew has gone back to wait, so only the call's own last run lets it go */
 static void finish_page_call(GObject *view, GAsyncResult *result, gpointer data) {
+	g_autofree PageRun *run = data;
 	g_autoptr(GError) error = NULL;
 	g_autoptr(JSCValue) value = webkit_web_view_call_async_javascript_function_finish(WEBKIT_WEB_VIEW(view),
 		result, &error);
-	if (error)
-		g_warning("Page call failed: %s", error->message);
+	GPtrArray *running = run->page->running_calls;
+	for (guint index = 0; index < running->len; index++) {
+		PageCall *call = g_ptr_array_index(running, index);
+		if (call->run != run->run)
+			continue;
+		if (error)
+			g_warning("Page call failed: %s", error->message);
+		g_ptr_array_remove_index(running, index);
+		return;
+	}
 }
 
 
+/* Takes the call, which the page keeps among its running calls until the run finishes */
 static void run_page_call(YouTubePage *page, PageCall *call) {
+	call->run = ++page->last_run;
+	g_ptr_array_add(page->running_calls, call);
+	PageRun *run = g_new0(PageRun, 1);
+	*run = (PageRun){page, call->run};
 	webkit_web_view_call_async_javascript_function(page->view, call->body, -1, call->arguments, NULL, NULL, NULL,
-		finish_page_call, page);
+		finish_page_call, run);
+}
+
+
+/* The calls a page that loads anew cut off wait again, ahead of those made since */
+static void hold_running_calls(YouTubePage *page) {
+	g_ptr_array_set_free_func(page->running_calls, NULL);
+	for (guint index = page->running_calls->len; index > 0; index--)
+		g_ptr_array_insert(page->waiting_calls, 0, g_ptr_array_index(page->running_calls, index - 1));
+	g_ptr_array_set_size(page->running_calls, 0);
+	g_ptr_array_set_free_func(page->running_calls, free_page_call);
 }
 
 
@@ -91,7 +126,6 @@ void call_youtube_page(YouTubePage *page, const char *body, GVariant *arguments)
 		return;
 	}
 	run_page_call(page, call);
-	free_page_call(call);
 }
 
 
@@ -131,9 +165,12 @@ static void become_ready(YouTubePage *page, gboolean is_signed_in) {
 	page->is_ready = TRUE;
 	page->is_signing_out = FALSE;
 	page->retry_seconds = 0;
-	for (guint index = 0; index < page->waiting_calls->len; index++)
-		run_page_call(page, g_ptr_array_index(page->waiting_calls, index));
-	g_ptr_array_set_size(page->waiting_calls, 0);
+	g_autoptr(GPtrArray) waiting = g_steal_pointer(&page->waiting_calls);
+	page->waiting_calls = g_ptr_array_new_with_free_func(free_page_call);
+	page->running_calls = g_ptr_array_new_with_free_func(free_page_call);
+	g_ptr_array_set_free_func(waiting, NULL);
+	for (guint index = 0; index < waiting->len; index++)
+		run_page_call(page, g_ptr_array_index(waiting, index));
 	page->events->ready(is_signed_in, page->data);
 	if (page->is_video_shown)
 		show_youtube_video(page, TRUE, page->video_drawn);
@@ -156,8 +193,9 @@ static void receive_message(WebKitUserContentManager *manager, JSCValue *message
 		g_autofree char *text = read_page_text(message, "message");
 		g_warning("%s", text);
 	} else if (strcmp(type, "error") == 0) {
+		/* A page that is going away fails what it had under way, which runs again on the next one */
 		g_autofree char *text = read_page_text(message, "message");
-		if (!page->is_signing_out)
+		if (!page->is_signing_out && page->is_ready)
 			page->events->failed(text, message, page->data);
 	} else {
 		page->events->message_arrived(type, message, page->data);
@@ -169,8 +207,10 @@ static void receive_message(WebKitUserContentManager *manager, JSCValue *message
  * is ready, and signed out visitors can land on Google's consent page, where the shared script never runs to say so */
 static void notice_page(WebKitWebView *view, WebKitLoadEvent event, YouTubePage *page) {
 	const char *address = webkit_web_view_get_uri(view);
-	if (event == WEBKIT_LOAD_STARTED)
+	if (event == WEBKIT_LOAD_STARTED) {
 		page->is_ready = FALSE;
+		hold_running_calls(page);
+	}
 	else if (event == WEBKIT_LOAD_FINISHED && !page->is_ready && !g_str_has_prefix(address, page->site->site))
 		become_ready(page, FALSE);
 }
@@ -266,6 +306,7 @@ YouTubePage *create_youtube_page(const YouTubeSite *site, const YouTubePageEvent
 	if (g_getenv(CPU_RENDERING_VARIABLE))
 		g_setenv(GL_VIDEO_OFF_VARIABLE, "1", FALSE);
 	page->waiting_calls = g_ptr_array_new_with_free_func(free_page_call);
+	page->running_calls = g_ptr_array_new_with_free_func(free_page_call);
 	g_autofree char *data_path = get_page_path(g_get_user_data_dir(), NULL);
 	g_autofree char *cache_path = get_page_path(g_get_user_cache_dir(), NULL);
 	page->session = webkit_network_session_new(data_path, cache_path);
@@ -276,6 +317,8 @@ YouTubePage *create_youtube_page(const YouTubeSite *site, const YouTubePageEvent
 	page->view = g_object_new(WEBKIT_TYPE_WEB_VIEW, "network-session", page->session,
 		"user-content-manager", page->content, "website-policies", policies, NULL);
 	g_object_ref_sink(page->view);
+	/* Nothing is heard before the app asks for a video to play, such as from a page that starts on one */
+	webkit_web_view_set_is_muted(page->view, TRUE);
 	g_signal_connect(page->view, "permission-request", G_CALLBACK(refuse_permission), NULL);
 	g_signal_connect(page->view, "enter-fullscreen", G_CALLBACK(refuse_full_screen), NULL);
 	g_signal_connect(page->view, "load-changed", G_CALLBACK(notice_page), page);
@@ -407,6 +450,7 @@ static void open_player(YouTubePage *page, const char *video_id) {
 
 
 void play_youtube_video(YouTubePage *page, const char *video_id, int volume, double start_seconds) {
+	webkit_web_view_set_is_muted(page->view, FALSE);
 	open_player(page, video_id);
 	call_youtube_page(page, "return crimsonPage.play(id, volume, start)", create_page_arguments(
 		"id", g_variant_new_string(video_id), "volume", g_variant_new_int32(volume),
@@ -420,6 +464,7 @@ void pause_youtube_video(YouTubePage *page) {
 
 
 void resume_youtube_video(YouTubePage *page) {
+	webkit_web_view_set_is_muted(page->view, FALSE);
 	call_youtube_page(page, "crimsonPage.resume()", NULL);
 }
 

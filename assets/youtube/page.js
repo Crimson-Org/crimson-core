@@ -210,6 +210,15 @@
 	}
 
 
+	// Whether the app asked for a video yet, since a page that starts on a video of YouTube's choosing, such as a watch
+	// page opened only for its player, must never play it
+	let hasAskedToPlay = false
+	document.addEventListener('playing', () => {
+		if (!hasAskedToPlay)
+			getPlayer()?.pauseVideo?.()
+	}, true)
+
+
 	// Whether the player has started listening to its video element, which YouTube keeps between videos
 	let isListening = false
 	async function waitForPlayer() {
@@ -239,6 +248,7 @@
 	// Loading alone leaves the video unstarted when the page was paused, so it is told to play as well, from the start
 	// seconds, or where YouTube remembers when they are below zero
 	async function play(id, volume, start) {
+		hasAskedToPlay = true
 		const player = await waitForPlayer()
 		const isStartingOver = start === 0
 		startingOver = isStartingOver ? id : ''
