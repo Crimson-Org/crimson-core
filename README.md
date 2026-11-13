@@ -42,6 +42,10 @@ A spinner that waits half a second before fading in, and content that fades in o
 
 Line numbers that count the file's own lines, for apps built on GtkSourceView.
 
+### YouTube
+
+A YouTube page that signs in, strips ads, blocks trackers and plays videos, while the app draws every control itself.
+
 ### Installing
 
 Shared scripts that install, remove and pack an app with its desktop files, icons and notices.
@@ -53,4 +57,5 @@ Steps:
  2. Compile `src/common/*/*.c` with `-Isubprojects/crimson-core/src` and link GTK4 and libadwaita
  3. For an app built on GtkSourceView, also compile `src/source/*.c`
  4. Compile `assets/crimson-core.gresource.xml` into the program
- 5. Give header bars and toolbar views that form the title bar the `title-bar` class
+ 5. For an app that plays YouTube, also compile `src/youtube/*.c` and `assets/youtube/youtube.gresource.xml`, and link WebKitGTK 6
+ 6. Give header bars and toolbar views that form the title bar the `title-bar` class

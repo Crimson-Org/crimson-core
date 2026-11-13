@@ -1,5 +1,8 @@
 #include "common/widgets/dialogs.h"
 
+/* A dialog takes no more than this share of its window's height */
+#define WINDOW_SHARE 0.8
+
 
 /* The dialog spans the dimmed window around its box, so presses on it are watched before its own widgets take them,
  * and one outside the box closes it */
@@ -30,4 +33,12 @@ void close_on_outside_click(AdwDialog *dialog) {
 	gtk_event_controller_set_propagation_phase(controller, GTK_PHASE_CAPTURE);
 	g_signal_connect(controller, "event", G_CALLBACK(notice_press), NULL);
 	gtk_widget_add_controller(GTK_WIDGET(dialog), controller);
+}
+
+
+void fit_dialog_height(AdwDialog *dialog, GtkWidget *parent, int most) {
+	GtkRoot *root = parent ? gtk_widget_get_root(parent) : NULL;
+	int window_height = root ? gtk_widget_get_height(GTK_WIDGET(root)) : 0;
+	int height = window_height > 0 ? MIN(most, (int)(window_height * WINDOW_SHARE)) : most;
+	adw_dialog_set_content_height(dialog, height);
 }
