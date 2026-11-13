@@ -40,6 +40,9 @@ typedef struct {
 	const char *script;
 	/* The site's name for the log, such as YouTube Music */
 	const char *name;
+	/* Where a video's own page starts, such as https://www.youtube.com/watch?v=, for a site whose player only lives
+	 * there, or NULL for a site whose player is on every page */
+	const char *watch_address;
 } YouTubeSite;
 
 /* A YouTube page the app drives, which signs in, blocks ads and trackers, answers the app's calls and plays videos */
@@ -63,8 +66,11 @@ char *read_page_text(JSCValue *object, const char *name);
 double read_page_number(JSCValue *object, const char *name);
 gboolean read_page_flag(JSCValue *object, const char *name);
 
-/* Volume runs from 0 to 100, and a video that does not resume starts over even when YouTube remembers where it was */
-void play_youtube_video(YouTubePage *page, const char *video_id, int volume, gboolean is_resuming);
+/* Starts a video where YouTube remembers it was stopped */
+#define YOUTUBE_RESUME (-1.0)
+/* Volume runs from 0 to 100, and the video starts at the seconds given, even at 0 when YouTube remembers a later
+ * place, or where YouTube remembers with YOUTUBE_RESUME */
+void play_youtube_video(YouTubePage *page, const char *video_id, int volume, double start_seconds);
 void pause_youtube_video(YouTubePage *page);
 void resume_youtube_video(YouTubePage *page);
 void seek_youtube_video(YouTubePage *page, double seconds);

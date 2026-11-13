@@ -135,6 +135,8 @@ static void become_ready(YouTubePage *page, gboolean is_signed_in) {
 		run_page_call(page, g_ptr_array_index(page->waiting_calls, index));
 	g_ptr_array_set_size(page->waiting_calls, 0);
 	page->events->ready(is_signed_in, page->data);
+	if (page->is_video_shown)
+		show_youtube_video(page, TRUE, page->video_drawn);
 }
 
 
@@ -163,10 +165,13 @@ static void receive_message(WebKitUserContentManager *manager, JSCValue *message
 }
 
 
-/* Signed out visitors can land on Google's consent page, where the shared script never runs to say so itself */
+/* A page that loads anew, such as the watch page the first video opens, takes calls again once its script says it
+ * is ready, and signed out visitors can land on Google's consent page, where the shared script never runs to say so */
 static void notice_page(WebKitWebView *view, WebKitLoadEvent event, YouTubePage *page) {
 	const char *address = webkit_web_view_get_uri(view);
-	if (event == WEBKIT_LOAD_FINISHED && !page->is_ready && !g_str_has_prefix(address, page->site->site))
+	if (event == WEBKIT_LOAD_STARTED)
+		page->is_ready = FALSE;
+	else if (event == WEBKIT_LOAD_FINISHED && !page->is_ready && !g_str_has_prefix(address, page->site->site))
 		become_ready(page, FALSE);
 }
 
@@ -388,10 +393,24 @@ void sign_out_youtube_page(YouTubePage *page) {
 }
 
 
-void play_youtube_video(YouTubePage *page, const char *video_id, int volume, gboolean is_resuming) {
-	call_youtube_page(page, "return crimsonPage.play(id, volume, resume)", create_page_arguments(
+/* A site whose player only lives on a video's own page opens that page for the first video, and every call waits until
+ * it is ready, which later videos never need, since they change in place */
+static void open_player(YouTubePage *page, const char *video_id) {
+	const char *address = webkit_web_view_get_uri(page->view);
+	if (!page->site->watch_address || (address && g_str_has_prefix(address, page->site->watch_address)))
+		return;
+	page->is_ready = FALSE;
+	g_autofree char *escaped = g_uri_escape_string(video_id, NULL, FALSE);
+	g_autofree char *watch = g_strconcat(page->site->watch_address, escaped, NULL);
+	webkit_web_view_load_uri(page->view, watch);
+}
+
+
+void play_youtube_video(YouTubePage *page, const char *video_id, int volume, double start_seconds) {
+	open_player(page, video_id);
+	call_youtube_page(page, "return crimsonPage.play(id, volume, start)", create_page_arguments(
 		"id", g_variant_new_string(video_id), "volume", g_variant_new_int32(volume),
-		"resume", g_variant_new_int32(is_resuming), NULL));
+		"start", g_variant_new_double(start_seconds), NULL));
 }
 
 

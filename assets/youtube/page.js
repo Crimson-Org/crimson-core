@@ -236,16 +236,21 @@
 	let lastState = -1
 
 
-	// Loading alone leaves the video unstarted when the page was paused, so it is told to play as well
-	async function play(id, volume, resume) {
+	// Loading alone leaves the video unstarted when the page was paused, so it is told to play as well, from the start
+	// seconds, or where YouTube remembers when they are below zero
+	async function play(id, volume, start) {
 		const player = await waitForPlayer()
-		startingOver = resume ? '' : id
+		const isStartingOver = start === 0
+		startingOver = isStartingOver ? id : ''
 		hasSoughtStart = false
 		isPausing = false
 		wantedVolume = volume
 		player.unMute()
-		player.loadVideoById(id)
-		player.setVolume(resume ? volume : 0)
+		if (start > 0)
+			player.loadVideoById(id, start)
+		else
+			player.loadVideoById(id)
+		player.setVolume(isStartingOver ? 0 : volume)
 		player.playVideo()
 	}
 
