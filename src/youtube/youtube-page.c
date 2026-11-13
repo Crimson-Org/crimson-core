@@ -5,6 +5,7 @@
 #include "common/storage/key-store.h"
 #include "common/widgets/dialogs.h"
 #include "common/widgets/loading.h"
+#include "youtube/page-rules.h"
 #include "youtube/youtube-page.h"
 
 #define YOUTUBE_RESOURCES CORE_RESOURCES "/youtube/"
@@ -44,6 +45,8 @@ struct YouTubePage {
 	/* Requests the page had under way fail as its sign in is cleared, which says nothing worth showing */
 	gboolean is_signing_out;
 	YouTubeVideoDrawn video_drawn;
+	/* uBlock Origin's rules for YouTube, or our own ad pruner before any are built */
+	WebKitUserScript *rules;
 	/* Calls made before the page was ready, run in order once it is */
 	GPtrArray *waiting_calls;
 	/* Calls the page runs now, which a page that loads anew cuts off, so they go back to wait for the new one */
@@ -270,22 +273,40 @@ static GBytes *read_resource(const char *path) {
 }
 
 
+static WebKitUserScript *create_page_script(YouTubePage *page, const char *text, WebKitUserScriptInjectionTime time) {
+	g_autofree char *pages = g_strconcat(page->site->site, "*", NULL);
+	const char *const allowed[] = {pages, NULL};
+	return webkit_user_script_new(text, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME, time, allowed, NULL);
+}
+
+
 static void add_page_script(YouTubePage *page, const char *path, WebKitUserScriptInjectionTime time) {
 	g_autoptr(GBytes) source = read_resource(path);
 	g_autofree char *text = g_strndup(g_bytes_get_data(source, NULL), g_bytes_get_size(source));
-	g_autofree char *pages = g_strconcat(page->site->site, "*", NULL);
-	const char *const allowed[] = {pages, NULL};
-	g_autoptr(WebKitUserScript) script = webkit_user_script_new(text, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME, time,
-		allowed, NULL);
+	g_autoptr(WebKitUserScript) script = create_page_script(page, text, time);
 	webkit_user_content_manager_add_script(page->content, script);
 }
 
 
-/* The ad pruner runs before any of the page's own scripts, so YouTube never sees the ads it removes, and the app's
- * script runs after the shared one it builds on */
+/* The rules run before any of the page's own scripts, in place of the rules before them, from the next page on */
+static void use_rules(YouTubePage *page, const char *text) {
+	if (page->rules)
+		webkit_user_content_manager_remove_script(page->content, page->rules);
+	g_clear_pointer(&page->rules, webkit_user_script_unref);
+	if (text) {
+		page->rules = create_page_script(page, text, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START);
+	} else {
+		g_autoptr(GBytes) source = read_resource(AD_PRUNER_RESOURCE);
+		g_autofree char *pruner = g_strndup(g_bytes_get_data(source, NULL), g_bytes_get_size(source));
+		page->rules = create_page_script(page, pruner, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START);
+	}
+	webkit_user_content_manager_add_script(page->content, page->rules);
+}
+
+
+/* The app's script runs after the shared one it builds on, and the rules come in before the site opens */
 static void create_content_manager(YouTubePage *page) {
 	page->content = webkit_user_content_manager_new();
-	add_page_script(page, AD_PRUNER_RESOURCE, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START);
 	add_page_script(page, PAGE_RESOURCE, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END);
 	g_autofree char *script = get_resource_path(page->site->script);
 	add_page_script(page, script, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END);
@@ -371,12 +392,45 @@ static void open_session(YouTubePage *page) {
 }
 
 
+static void use_refreshed_rules(const char *script, gpointer data) {
+	if (script)
+		use_rules(data, script);
+}
+
+
+/* Before any rules were built, the site waits for the first build, or for our own pruner when that fails */
+static void use_first_rules(const char *script, gpointer data) {
+	use_rules(data, script);
+	open_session(data);
+}
+
+
+static char *get_site_host(YouTubePage *page) {
+	g_autoptr(GUri) address = g_uri_parse(page->site->site, G_URI_FLAGS_NONE, NULL);
+	return g_strdup(address ? g_uri_get_host(address) : "");
+}
+
+
+static void use_kept_rules(const char *script, gpointer data) {
+	YouTubePage *page = data;
+	note_startup_moment("Rules read");
+	g_autofree char *host = get_site_host(page);
+	if (!script) {
+		refresh_page_rules(host, use_first_rules, page);
+		return;
+	}
+	use_rules(page, script);
+	open_session(page);
+	refresh_page_rules(host, use_refreshed_rules, page);
+}
+
+
 static void use_blocklist(YouTubePage *page, WebKitUserContentFilter *filter, GError *error) {
 	if (filter)
 		webkit_user_content_manager_add_filter(page->content, filter);
 	else
 		g_warning("The ad and tracker blocklist was not loaded: %s", error->message);
-	open_session(page);
+	read_page_rules(use_kept_rules, page);
 }
 
 

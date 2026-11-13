@@ -44,7 +44,8 @@ Line numbers that count the file's own lines, for apps built on GtkSourceView.
 
 ### YouTube
 
-A YouTube page that signs in, strips ads, blocks trackers and plays videos, while the app draws every control itself.
+A YouTube page that signs in, strips ads, blocks trackers and plays videos, while the app draws every control itself.\
+Ads are removed with [uBlock Origin](https://github.com/gorhill/uBlock)'s own YouTube rules, fetched from its public lists once a day.
 
 ### Installing
 
