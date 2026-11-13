@@ -261,6 +261,8 @@
 		else
 			player.loadVideoById(id)
 		player.setVolume(isStartingOver ? 0 : volume)
+		// The app chooses what plays next, so YouTube never moves on to a video of its own when one ends
+		player.setAutonav?.(false)
 		player.playVideo()
 	}
 
