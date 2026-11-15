@@ -11,6 +11,7 @@
 #define YOUTUBE_RESOURCES CORE_RESOURCES "/youtube/"
 #define PAGE_RESOURCE YOUTUBE_RESOURCES "page.js"
 #define AD_PRUNER_RESOURCE YOUTUBE_RESOURCES "ad-pruner.js"
+#define CODECS_RESOURCE YOUTUBE_RESOURCES "codecs.js"
 #define BLOCKLIST_RESOURCE YOUTUBE_RESOURCES "blocklist.json"
 #define MESSAGE_HANDLER "crimson"
 /* Followed by a checksum of the rules, so a changed blocklist compiles once and is loaded after that */
@@ -311,9 +312,11 @@ static void use_rules(YouTubePage *page, const char *text) {
 }
 
 
-/* The app's script runs after the shared one it builds on, and the rules come in before the site opens */
+/* The codecs are chosen before YouTube asks for any, the app's script runs after the shared one it builds on, and the
+ * rules come in before the site opens */
 static void create_content_manager(YouTubePage *page) {
 	page->content = webkit_user_content_manager_new();
+	add_page_script(page, CODECS_RESOURCE, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START);
 	add_page_script(page, PAGE_RESOURCE, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END);
 	g_autofree char *script = get_resource_path(page->site->script);
 	add_page_script(page, script, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END);

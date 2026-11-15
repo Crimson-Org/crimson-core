@@ -3,6 +3,7 @@
 	<gresource prefix="/io/github/CrimsonOrg/CrimsonCore/youtube">
 		<file>page.js</file>
 		<file>ad-pruner.js</file>
+		<file>codecs.js</file>
 		<file>blocklist.json</file>
 		<file>rule-builder.js</file>
 	</gresource>
